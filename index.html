@@ -89,6 +89,16 @@
   .tag-manage-name { flex: 1; font-size: 14px; font-weight: 600; color: #2c2c2c; }
   .tag-manage-count { font-size: 12px; color: #888; margin-right: 8px; }
   .tag-edit-input { flex: 1; }
+  .group-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; background: #eceae2; border-radius: 8px;
+    margin-bottom: 8px; cursor: pointer; user-select: none;
+  }
+  .group-header:hover { background: #e2ded2; }
+  .group-toggle-icon { font-size: 12px; width: 14px; display: inline-block; text-align: center; }
+  .group-name { font-weight: 600; font-size: 14px; flex: 1; }
+  .group-count { font-size: 12px; color: #888; }
+  .group-items-wrap { margin-bottom: 12px; }
 </style>
 </head>
 <body>
@@ -134,7 +144,8 @@
   </div>
 
   <div class="section">
-    <div class="section-title">掃除箇所の設定（スケジュール順）</div>
+    <div class="section-title">掃除箇所の設定（タグ別グループ）</div>
+    <input type="text" id="search-box" placeholder="🔍 掃除箇所名やタグで検索" style="width: 100%; margin-bottom: 12px;" oninput="onSearchInput(this.value)" />
     <div id="input-list"></div>
     <button style="width: 100%; margin-top: 12px;" onclick="addInput()">
       ＋ 掃除箇所を追加
@@ -165,6 +176,8 @@ let completedHistory = [];
 let tags = [];
 let showingTagInput = null;
 let editingTagName = null;
+let searchQuery = '';
+let collapsedGroups = new Set();
 
 const STORAGE_KEY = 'cleaningScheduleItems';
 const SCHEDULE_KEY = 'cleaningSchedule';
@@ -311,11 +324,8 @@ function getSortedItems() {
   });
 }
 
-function renderInputs() {
-  const list = document.getElementById('input-list');
-  const sortedItems = getSortedItems();
-  
-  list.innerHTML = sortedItems.map(item => `
+function itemCardHtml(item) {
+  return `
     <div class="item-card">
       <div class="row1">
         <div style="flex: 1; min-width: 140px;">
@@ -365,7 +375,71 @@ function renderInputs() {
         `}
       </div>
     </div>
-  `).join('');
+  `;
+}
+
+function onSearchInput(value) {
+  searchQuery = value;
+  renderInputs();
+}
+
+function toggleGroup(key) {
+  if (collapsedGroups.has(key)) {
+    collapsedGroups.delete(key);
+  } else {
+    collapsedGroups.add(key);
+  }
+  renderInputs();
+}
+
+function renderInputs() {
+  const list = document.getElementById('input-list');
+  const sortedItems = getSortedItems();
+  const query = searchQuery.trim().toLowerCase();
+  const isSearching = query.length > 0;
+
+  // タグごとにグルーピング（表示順は既存タグの登録順 → 最後に「タグなし」）
+  const groupOrder = [...tags, ''];
+  const groupedMap = {};
+  sortedItems.forEach(item => {
+    const key = item.tag && tags.includes(item.tag) ? item.tag : '';
+    if (!groupedMap[key]) groupedMap[key] = [];
+    groupedMap[key].push(item);
+  });
+
+  const html = [];
+
+  groupOrder.forEach(key => {
+    const groupItems = groupedMap[key];
+    if (!groupItems || groupItems.length === 0) return;
+
+    const filteredItems = isSearching
+      ? groupItems.filter(item => {
+          const placeMatch = item.place.toLowerCase().includes(query);
+          const tagMatch = (key || '').toLowerCase().includes(query);
+          return placeMatch || tagMatch;
+        })
+      : groupItems;
+
+    if (isSearching && filteredItems.length === 0) return;
+
+    const isCollapsed = isSearching ? false : collapsedGroups.has(key);
+    const groupLabel = key || 'タグなし';
+    const icon = isCollapsed ? '▶' : '▼';
+
+    html.push(`
+      <div class="group-items-wrap">
+        <div class="group-header" onclick="toggleGroup('${key.replace(/'/g, "\\'")}')">
+          <span class="group-toggle-icon">${icon}</span>
+          <span class="group-name">${groupLabel}</span>
+          <span class="group-count">${filteredItems.length}件</span>
+        </div>
+        ${isCollapsed ? '' : filteredItems.map(item => itemCardHtml(item)).join('')}
+      </div>
+    `);
+  });
+
+  list.innerHTML = html.length > 0 ? html.join('') : '<div class="empty-state">該当する掃除箇所がありません</div>';
 
   renderTagManageList();
 }
