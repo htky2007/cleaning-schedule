@@ -67,6 +67,10 @@
   .data-section { background: #fff; border-radius: 12px; padding: 1rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .data-note { font-size: 12px; color: #888; margin-top: 8px; line-height: 1.5; }
   #import-file { display: none; }
+  .tag-manage-item { display: flex; gap: 8px; align-items: center; padding: 10px; background: #f5f5f0; border-radius: 8px; margin-bottom: 8px; }
+  .tag-manage-name { flex: 1; font-size: 14px; font-weight: 600; color: #2c2c2c; }
+  .tag-manage-count { font-size: 12px; color: #888; margin-right: 8px; }
+  .tag-edit-input { flex: 1; }
 </style>
 </head>
 <body>
@@ -83,6 +87,12 @@
     <div class="data-note">機種変更する前に「エクスポート」でファイルを保存し、新しい端末で「インポート」してください。</div>
   </div>
   
+  <div class="data-section">
+    <div class="section-title">タグ管理</div>
+    <div id="tag-manage-list"></div>
+    <div class="data-note" id="tag-empty-note">まだタグがありません。掃除箇所の設定で「＋新しいタグ」から追加できます。</div>
+  </div>
+
   <div class="section">
     <div class="section-title">掃除箇所の設定（スケジュール順）</div>
     <div id="input-list"></div>
@@ -136,6 +146,7 @@ let schedule = [];
 let completedHistory = [];
 let tags = [];
 let showingTagInput = null;
+let editingTagName = null;
 
 const STORAGE_KEY = 'cleaningScheduleItems';
 const SCHEDULE_KEY = 'cleaningSchedule';
@@ -337,6 +348,8 @@ function renderInputs() {
       </div>
     </div>
   `).join('');
+
+  renderTagManageList();
 }
 
 function updateItem(id, field, value) {
@@ -386,6 +399,121 @@ function confirmNewTag(itemId) {
   
   showingTagInput = null;
   renderInputs();
+  renderTagManageList();
+}
+
+function renderTagManageList() {
+  const container = document.getElementById('tag-manage-list');
+  const emptyNote = document.getElementById('tag-empty-note');
+
+  if (tags.length === 0) {
+    container.innerHTML = '';
+    emptyNote.style.display = 'block';
+    return;
+  }
+  emptyNote.style.display = 'none';
+
+  container.innerHTML = tags.map(tag => {
+    const count = items.filter(i => i.tag === tag).length;
+    if (editingTagName === tag) {
+      return `
+        <div class="tag-manage-item">
+          <input type="text" class="tag-edit-input" id="tag-edit-input-${encodeURIComponent(tag)}" value="${tag}" />
+          <button class="btn-confirm" onclick="confirmEditTag('${tag.replace(/'/g, "\\'")}')">保存</button>
+          <button onclick="cancelEditTag()">キャンセル</button>
+        </div>
+      `;
+    }
+    return `
+      <div class="tag-manage-item">
+        <span class="tag-manage-name">${tag}</span>
+        <span class="tag-manage-count">${count}件で使用中</span>
+        <button onclick="startEditTag('${tag.replace(/'/g, "\\'")}')">編集</button>
+        <button class="btn-delete" onclick="deleteTag('${tag.replace(/'/g, "\\'")}')">削除</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function startEditTag(tag) {
+  editingTagName = tag;
+  renderTagManageList();
+}
+
+function cancelEditTag() {
+  editingTagName = null;
+  renderTagManageList();
+}
+
+function confirmEditTag(oldTag) {
+  const input = document.getElementById('tag-edit-input-' + encodeURIComponent(oldTag));
+  const newTag = input.value.trim();
+
+  if (!newTag) {
+    alert('タグ名を入力してください');
+    return;
+  }
+
+  if (newTag !== oldTag && tags.includes(newTag)) {
+    alert('そのタグ名はすでに存在します');
+    return;
+  }
+
+  // タグリストを更新
+  tags = tags.map(t => t === oldTag ? newTag : t);
+  saveTagsToStorage();
+
+  // 連動：このタグを使っている全項目を更新
+  items.forEach(item => {
+    if (item.tag === oldTag) item.tag = newTag;
+  });
+  saveToStorage();
+
+  // スケジュール内の表示用タグも更新（次回生成時に反映されるが、念のため今表示中のものも更新）
+  schedule.forEach(s => {
+    if (s.tag === oldTag) s.tag = newTag;
+  });
+  saveScheduleToStorage();
+
+  completedHistory.forEach(h => {
+    if (h.tag === oldTag) h.tag = newTag;
+  });
+  saveHistoryToStorage();
+
+  editingTagName = null;
+  renderTagManageList();
+  renderInputs();
+  renderSchedule();
+  renderHistory();
+}
+
+function deleteTag(tag) {
+  if (!confirm(`タグ「${tag}」を削除しますか？このタグを使っている項目は「なし」になります。`)) {
+    return;
+  }
+
+  tags = tags.filter(t => t !== tag);
+  saveTagsToStorage();
+
+  items.forEach(item => {
+    if (item.tag === tag) item.tag = '';
+  });
+  saveToStorage();
+
+  schedule.forEach(s => {
+    if (s.tag === tag) s.tag = '';
+  });
+  saveScheduleToStorage();
+
+  completedHistory.forEach(h => {
+    if (h.tag === tag) h.tag = '';
+  });
+  saveHistoryToStorage();
+
+  renderTagManageList();
+  renderInputs();
+  renderSchedule();
+  renderHistory();
 }
 
 function parsePreferredTimes(timeStr) {
