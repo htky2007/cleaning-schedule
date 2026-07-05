@@ -667,6 +667,17 @@ function canFitAtTime(startTime, duration) {
   return startTime + duration / 60 <= 18;
 }
 
+function computeNeededHoursWithBuffer(duration) {
+  let neededHours = Math.ceil(duration / 60);
+  const slack = neededHours * 60 - duration;
+  if (slack < 5) neededHours += 1; // 片付け5分の余白が無いので1時間分多めに確保
+  return neededHours;
+}
+
+function canFitHours(startTime, neededHours) {
+  return startTime + neededHours <= 18;
+}
+
 function shouldIncludeInSchedule(item, today) {
   if (!item.lastExecuted) return true;
   const lastDate = new Date(item.lastExecuted);
@@ -751,11 +762,11 @@ function buildSchedule(validItems, skipNotReady = false) {
   // 1. 推奨時間帯がある項目を優先配置（それぞれ単独ブロック）
   itemsWithPreferred.forEach(item => {
     const preferred = shuffle(parsePreferredTimes(item.preferredTimes));
-    const neededHours = Math.ceil(item.duration / 60);
+    const neededHours = computeNeededHoursWithBuffer(item.duration);
     let placed = false;
 
     for (let hour of preferred) {
-      if (canFitAtTime(hour, item.duration)) {
+      if (canFitHours(hour, neededHours)) {
         let canPlace = true;
         for (let i = 0; i < neededHours; i++) {
           if (usedSlots.has(hour + i)) { canPlace = false; break; }
@@ -796,7 +807,7 @@ function buildSchedule(validItems, skipNotReady = false) {
 
     // 大きい項目（60分以上）は単独ブロックとして専有
     bigItems.forEach(item => {
-      const neededHours = Math.ceil(item.duration / 60);
+      const neededHours = computeNeededHoursWithBuffer(item.duration);
       const start = findAvailableStart(neededHours, usedSlots);
       if (start === null) {
         warningItems.push(`${item.place}（${item.duration}分）`);
@@ -837,7 +848,16 @@ function buildSchedule(validItems, skipNotReady = false) {
         continue;
       }
 
-      blocks.push({ tag: tagKey, startTime: hour, capacityMinutes: 60, entries });
+      let capacityMinutes = 60;
+      if (usedMinutes >= 60 - 4) {
+        // ちょうど（または余白5分未満で）埋まった場合、片付け用に次の1時間も予約しておく
+        if (!usedSlots.has(hour + 1) && hour + 1 <= 17) {
+          usedSlots.add(hour + 1);
+          capacityMinutes = 120;
+        }
+      }
+
+      blocks.push({ tag: tagKey, startTime: hour, capacityMinutes, entries });
     }
   });
 
