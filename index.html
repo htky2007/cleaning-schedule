@@ -563,7 +563,7 @@ function buildSchedule(validItems, skipNotReady = false) {
   const itemsWithoutPreferred = itemsToSchedule.filter(i => !parsePreferredTimes(i.preferredTimes));
 
   itemsWithPreferred.forEach(item => {
-    const preferred = parsePreferredTimes(item.preferredTimes);
+    const preferred = shuffle(parsePreferredTimes(item.preferredTimes));
     const durationHours = item.duration / 60;
     let placed = false;
 
