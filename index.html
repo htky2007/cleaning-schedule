@@ -370,6 +370,7 @@ function itemCardHtml(item) {
           <label class="input-label">推奨時間帯</label>
           <input type="text" placeholder="9,10,11" value="${item.preferredTimes}" onchange="updateItem(${item.id}, 'preferredTimes', this.value)" style="width: 100%;" />
         </div>
+        <button onclick="duplicateItem(${item.id})" title="複製">⧉</button>
         <button class="btn-delete" onclick="deleteItem(${item.id})">✕</button>
       </div>
       <div class="row2">
@@ -472,6 +473,16 @@ function updateItem(id, field, value) {
 
 function deleteItem(id) {
   items = items.filter(i => i.id !== id);
+  renderInputs();
+  saveToStorage();
+}
+
+function duplicateItem(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  const copy = { ...item, id: Date.now(), lastExecuted: null };
+  const index = items.findIndex(i => i.id === id);
+  items.splice(index + 1, 0, copy);
   renderInputs();
   saveToStorage();
 }
