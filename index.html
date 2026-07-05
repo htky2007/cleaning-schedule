@@ -535,7 +535,7 @@ function renderTagManageList() {
   }
   emptyNote.style.display = 'none';
 
-  container.innerHTML = tags.map(tag => {
+  container.innerHTML = tags.map((tag, index) => {
     const count = items.filter(i => i.tag === tag).length;
     if (editingTagName === tag) {
       return `
@@ -548,6 +548,10 @@ function renderTagManageList() {
     }
     return `
       <div class="tag-manage-item">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <button onclick="moveTagUp(${index})" ${index === 0 ? 'disabled' : ''} style="height: 20px; padding: 0 8px; font-size: 10px; line-height: 1;">▲</button>
+          <button onclick="moveTagDown(${index})" ${index === tags.length - 1 ? 'disabled' : ''} style="height: 20px; padding: 0 8px; font-size: 10px; line-height: 1;">▼</button>
+        </div>
         <span class="tag-manage-name">${tag}</span>
         <span class="tag-manage-count">${count}件で使用中</span>
         <button onclick="startEditTag('${tag.replace(/'/g, "\\'")}')">編集</button>
@@ -555,6 +559,22 @@ function renderTagManageList() {
       </div>
     `;
   }).join('');
+}
+
+function moveTagUp(index) {
+  if (index <= 0) return;
+  [tags[index - 1], tags[index]] = [tags[index], tags[index - 1]];
+  saveTagsToStorage();
+  renderTagManageList();
+  renderInputs();
+}
+
+function moveTagDown(index) {
+  if (index >= tags.length - 1) return;
+  [tags[index], tags[index + 1]] = [tags[index + 1], tags[index]];
+  saveTagsToStorage();
+  renderTagManageList();
+  renderInputs();
 }
 
 function startEditTag(tag) {
@@ -978,6 +998,9 @@ function completeItem(itemId, place) {
     renderSchedule();
     renderHistory();
     updateStats();
+    if (document.getElementById('overview-section').style.display !== 'none') {
+      renderOverview();
+    }
   }
 }
 
@@ -1093,7 +1116,10 @@ function renderOverview() {
             <div class="overview-place">${item.place}${item.tag ? ` <span class="schedule-item-tag">${item.tag}</span>` : ''}</div>
             <div class="overview-meta">頻度：${item.frequency}${freqLabel}に1回 ｜ 最終実施：${lastExecutedStr} ｜ 次回期限：${nextDeadline.toLocaleDateString('ja-JP')}</div>
           </div>
-          <span class="overview-days ${daysClass}">${daysLabel}</span>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="overview-days ${daysClass}">${daysLabel}</span>
+            <button class="schedule-item-button" onclick="completeItem(${item.id}, '${item.place.replace(/'/g, "\\'")}')">実施</button>
+          </div>
         </div>
         <div class="overview-edit-row">
           <label>最終実施日を編集：</label>
