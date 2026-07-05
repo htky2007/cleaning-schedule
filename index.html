@@ -99,6 +99,17 @@
   .group-name { font-weight: 600; font-size: 14px; flex: 1; }
   .group-count { font-size: 12px; color: #888; }
   .group-items-wrap { margin-bottom: 12px; }
+  .overview-item { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .overview-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .overview-place { font-weight: 600; font-size: 14px; color: #2c2c2c; }
+  .overview-meta { font-size: 12px; color: #888; margin-top: 4px; }
+  .overview-days { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 12px; white-space: nowrap; }
+  .overview-days.overdue { background: #ffebee; color: #c62828; }
+  .overview-days.soon { background: #fff3e0; color: #e65100; }
+  .overview-days.ok { background: #e8f5e9; color: #2e7d32; }
+  .overview-edit-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .overview-edit-row label { font-size: 12px; color: #888; }
+  .overview-edit-row input[type="date"] { height: 34px; padding: 0 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -106,7 +117,6 @@
   <h2>🧹 掃除スケジュール自動作成</h2>
 
   <div class="button-group">
-    <button onclick="generateSchedule()">初期作成</button>
     <button onclick="updateSchedule()">スケジュール更新</button>
     <button class="btn-delete" onclick="clearData()">リセット</button>
   </div>
@@ -127,6 +137,7 @@
   <div class="tabs">
     <button class="tab-button active" onclick="switchTab('schedule')">📅 スケジュール</button>
     <button class="tab-button" onclick="switchTab('history')">✓ 完了履歴</button>
+    <button class="tab-button" onclick="switchTab('overview')">📋 期限一覧</button>
   </div>
 
   <div id="schedule-section" class="section">
@@ -140,6 +151,13 @@
     <div class="section-title">完了履歴</div>
     <div id="history-container">
       <div class="empty-state">完了した項目はまだありません</div>
+    </div>
+  </div>
+
+  <div id="overview-section" class="section" style="display: none;">
+    <div class="section-title">最終実施日・次回期限 一覧（期限が近い順）</div>
+    <div id="overview-container">
+      <div class="empty-state">掃除箇所がありません</div>
     </div>
   </div>
 
@@ -245,7 +263,7 @@ function initializeWithData() {
     { id: 3, place: 'お風呂掃除', frequency: 1, unit: 'week', duration: 15, preferredTimes: '', tag: '', lastExecuted: null },
   ];
   renderInputs();
-  generateSchedule();
+  updateSchedule();
 }
 
 // ===== Export / Import =====
@@ -667,6 +685,19 @@ function makeEntry(item, startTime, endTime) {
   return { place: item.place, startTime, endTime, duration: item.duration, frequency: item.frequency, unit: item.unit, tag: item.tag, lastExecuted: item.lastExecuted, itemId: item.id };
 }
 
+function getUrgencyDays(item, today) {
+  const deadline = calculateNextDeadline(item.lastExecuted, item.frequency, item.unit);
+  return Math.ceil((deadline - today) / (1000 * 60 * 60 * 24));
+}
+
+function sortByUrgencyWithRandomTiebreak(itemsList, today) {
+  const shuffled = shuffle(itemsList);
+  return shuffled
+    .map(item => ({ item, urgency: getUrgencyDays(item, today) }))
+    .sort((a, b) => a.urgency - b.urgency)
+    .map(x => x.item);
+}
+
 function buildSchedule(validItems, skipNotReady = false) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -680,8 +711,11 @@ function buildSchedule(validItems, skipNotReady = false) {
     itemsToSchedule = validItems.filter(i => shouldIncludeInSchedule(i, today));
   }
 
-  const itemsWithPreferred = itemsToSchedule.filter(i => parsePreferredTimes(i.preferredTimes));
+  const itemsWithPreferredRaw = itemsToSchedule.filter(i => parsePreferredTimes(i.preferredTimes));
   const itemsWithoutPreferred = itemsToSchedule.filter(i => !parsePreferredTimes(i.preferredTimes));
+
+  // 期限が近い（＝緊急度が高い）項目を優先的に処理する（同着はランダム）
+  const itemsWithPreferred = sortByUrgencyWithRandomTiebreak(itemsWithPreferredRaw, today);
 
   // 1. 推奨時間帯がある項目を優先配置（それぞれ単独ブロック）
   itemsWithPreferred.forEach(item => {
@@ -719,12 +753,15 @@ function buildSchedule(validItems, skipNotReady = false) {
     groupMap[key].push(item);
   });
 
-  const groupKeys = shuffle(Object.keys(groupMap));
+  const groupKeys = shuffle(Object.keys(groupMap))
+    .map(key => ({ key, minUrgency: Math.min(...groupMap[key].map(i => getUrgencyDays(i, today))) }))
+    .sort((a, b) => a.minUrgency - b.minUrgency)
+    .map(x => x.key);
 
   groupKeys.forEach(tagKey => {
     const groupItems = groupMap[tagKey];
-    const bigItems = groupItems.filter(i => i.duration >= 60).sort((a, b) => b.duration - a.duration);
-    const smallQueue = shuffle(groupItems.filter(i => i.duration < 60));
+    const bigItems = sortByUrgencyWithRandomTiebreak(groupItems.filter(i => i.duration >= 60), today);
+    const smallQueue = sortByUrgencyWithRandomTiebreak(groupItems.filter(i => i.duration < 60), today);
 
     // 大きい項目（60分以上）は単独ブロックとして専有
     bigItems.forEach(item => {
@@ -821,12 +858,6 @@ function buildSchedule(validItems, skipNotReady = false) {
   renderSchedule();
   updateStats();
   document.getElementById('stats').style.display = 'flex';
-}
-
-function generateSchedule() {
-  const validItems = items.filter(i => i.place && i.duration > 0);
-  if (validItems.length === 0) { alert('掃除箇所を1つ以上追加してください'); return; }
-  buildSchedule(validItems, false);
 }
 
 function updateSchedule() {
@@ -975,18 +1006,91 @@ function renderHistory() {
 function switchTab(tab) {
   const scheduleSection = document.getElementById('schedule-section');
   const historySection = document.getElementById('history-section');
+  const overviewSection = document.getElementById('overview-section');
   const tabs = document.querySelectorAll('.tab-button');
-  if (tab === 'schedule') {
-    scheduleSection.style.display = 'block';
-    historySection.style.display = 'none';
-    tabs[0].classList.add('active');
-    tabs[1].classList.remove('active');
+
+  scheduleSection.style.display = tab === 'schedule' ? 'block' : 'none';
+  historySection.style.display = tab === 'history' ? 'block' : 'none';
+  overviewSection.style.display = tab === 'overview' ? 'block' : 'none';
+
+  tabs[0].classList.toggle('active', tab === 'schedule');
+  tabs[1].classList.toggle('active', tab === 'history');
+  tabs[2].classList.toggle('active', tab === 'overview');
+
+  if (tab === 'overview') renderOverview();
+}
+
+function formatDateForInput(dateValue) {
+  if (!dateValue) return '';
+  const d = new Date(dateValue);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function updateLastExecutedDate(itemId, dateStr) {
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+  if (!dateStr) {
+    item.lastExecuted = null;
   } else {
-    scheduleSection.style.display = 'none';
-    historySection.style.display = 'block';
-    tabs[0].classList.remove('active');
-    tabs[1].classList.add('active');
+    const d = new Date(dateStr + 'T00:00:00');
+    item.lastExecuted = d;
   }
+  saveToStorage();
+  renderOverview();
+}
+
+function renderOverview() {
+  const container = document.getElementById('overview-container');
+  const validItems = items.filter(i => i.place);
+
+  if (validItems.length === 0) {
+    container.innerHTML = '<div class="empty-state">掃除箇所がありません</div>';
+    return;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const withDeadline = validItems.map(item => {
+    const nextDeadline = calculateNextDeadline(item.lastExecuted, item.frequency, item.unit);
+    const daysUntil = Math.ceil((nextDeadline - today) / (1000 * 60 * 60 * 24));
+    return { item, nextDeadline, daysUntil };
+  });
+
+  withDeadline.sort((a, b) => a.daysUntil - b.daysUntil);
+
+  container.innerHTML = withDeadline.map(({ item, nextDeadline, daysUntil }) => {
+    const lastExecutedStr = item.lastExecuted ? new Date(item.lastExecuted).toLocaleDateString('ja-JP') : '未実施';
+    const freqLabel = item.unit === 'week' ? '週間' : 'ヶ月';
+
+    let daysClass = 'ok';
+    let daysLabel = `残り${daysUntil}日`;
+    if (daysUntil < 0) {
+      daysClass = 'overdue';
+      daysLabel = `${Math.abs(daysUntil)}日超過`;
+    } else if (daysUntil <= 2) {
+      daysClass = 'soon';
+    }
+
+    return `
+      <div class="overview-item">
+        <div class="overview-row">
+          <div>
+            <div class="overview-place">${item.place}${item.tag ? ` <span class="schedule-item-tag">${item.tag}</span>` : ''}</div>
+            <div class="overview-meta">頻度：${item.frequency}${freqLabel}に1回 ｜ 最終実施：${lastExecutedStr} ｜ 次回期限：${nextDeadline.toLocaleDateString('ja-JP')}</div>
+          </div>
+          <span class="overview-days ${daysClass}">${daysLabel}</span>
+        </div>
+        <div class="overview-edit-row">
+          <label>最終実施日を編集：</label>
+          <input type="date" value="${formatDateForInput(item.lastExecuted)}" onchange="updateLastExecutedDate(${item.id}, this.value)" />
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 function updateStats() {
