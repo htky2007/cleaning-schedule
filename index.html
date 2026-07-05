@@ -564,13 +564,41 @@ function shuffle(array) {
   return arr;
 }
 
+function findAvailableStart(neededHours, usedSlots) {
+  const candidates = [];
+  for (let start = 9; start + neededHours <= 18; start++) {
+    let ok = true;
+    for (let i = 0; i < neededHours; i++) {
+      if (usedSlots.has(start + i)) { ok = false; break; }
+    }
+    if (ok) candidates.push(start);
+  }
+  if (candidates.length === 0) return null;
+  return shuffle(candidates)[0];
+}
+
+function markUsedHours(start, neededHours, usedSlots) {
+  for (let i = 0; i < neededHours; i++) usedSlots.add(start + i);
+}
+
+function findNextFreeHour(usedSlots) {
+  for (let h = 9; h <= 17; h++) {
+    if (!usedSlots.has(h)) return h;
+  }
+  return null;
+}
+
+function makeEntry(item, startTime, endTime) {
+  return { place: item.place, startTime, endTime, duration: item.duration, frequency: item.frequency, unit: item.unit, tag: item.tag, lastExecuted: item.lastExecuted, itemId: item.id };
+}
+
 function buildSchedule(validItems, skipNotReady = false) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  
-  schedule = [];
+
   const usedSlots = new Set();
   const warningItems = [];
+  const blocks = [];
 
   let itemsToSchedule = validItems;
   if (skipNotReady) {
@@ -580,20 +608,26 @@ function buildSchedule(validItems, skipNotReady = false) {
   const itemsWithPreferred = itemsToSchedule.filter(i => parsePreferredTimes(i.preferredTimes));
   const itemsWithoutPreferred = itemsToSchedule.filter(i => !parsePreferredTimes(i.preferredTimes));
 
+  // 1. 推奨時間帯がある項目を優先配置（それぞれ単独ブロック）
   itemsWithPreferred.forEach(item => {
     const preferred = shuffle(parsePreferredTimes(item.preferredTimes));
-    const durationHours = item.duration / 60;
+    const neededHours = Math.ceil(item.duration / 60);
     let placed = false;
 
     for (let hour of preferred) {
       if (canFitAtTime(hour, item.duration)) {
         let canPlace = true;
-        for (let i = 0; i < Math.ceil(durationHours); i++) {
+        for (let i = 0; i < neededHours; i++) {
           if (usedSlots.has(hour + i)) { canPlace = false; break; }
         }
         if (canPlace) {
-          schedule.push({ place: item.place, startTime: hour, endTime: hour + durationHours, duration: item.duration, frequency: item.frequency, unit: item.unit, tag: item.tag, lastExecuted: item.lastExecuted, itemId: item.id });
-          for (let i = 0; i < Math.ceil(durationHours); i++) usedSlots.add(hour + i);
+          markUsedHours(hour, neededHours, usedSlots);
+          blocks.push({
+            tag: item.tag || '',
+            startTime: hour,
+            capacityMinutes: neededHours * 60,
+            entries: [makeEntry(item, hour, hour + item.duration / 60)]
+          });
           placed = true;
           break;
         }
@@ -602,34 +636,101 @@ function buildSchedule(validItems, skipNotReady = false) {
     if (!placed) warningItems.push(`${item.place}（推奨時間帯：${preferred.join(',')}）`);
   });
 
-  const longItems = itemsWithoutPreferred.filter(i => i.duration >= 60).sort((a, b) => b.duration - a.duration);
-  const shortItems = shuffle(itemsWithoutPreferred.filter(i => i.duration < 60));
-  const shuffledNoPreferred = [...longItems, ...shortItems];
-
-  shuffledNoPreferred.forEach(item => {
-    const durationHours = item.duration / 60;
-    let placed = false;
-    const timeSlots = Array.from({ length: 9 }, (_, i) => 9 + i);
-    const shuffledSlots = shuffle(timeSlots);
-
-    for (let hour of shuffledSlots) {
-      if (canFitAtTime(hour, item.duration)) {
-        let canPlace = true;
-        for (let i = 0; i < Math.ceil(durationHours); i++) {
-          if (usedSlots.has(hour + i)) { canPlace = false; break; }
-        }
-        if (canPlace) {
-          schedule.push({ place: item.place, startTime: hour, endTime: hour + durationHours, duration: item.duration, frequency: item.frequency, unit: item.unit, tag: item.tag, lastExecuted: item.lastExecuted, itemId: item.id });
-          for (let i = 0; i < Math.ceil(durationHours); i++) usedSlots.add(hour + i);
-          placed = true;
-          break;
-        }
-      }
-    }
-    if (!placed) warningItems.push(`${item.place}（${item.duration}分）`);
+  // 2. 推奨時間帯がない項目をタグでグループ化
+  const groupMap = {};
+  itemsWithoutPreferred.forEach(item => {
+    const key = item.tag || '';
+    if (!groupMap[key]) groupMap[key] = [];
+    groupMap[key].push(item);
   });
 
-  schedule.sort((a, b) => a.startTime - b.startTime);
+  const groupKeys = shuffle(Object.keys(groupMap));
+
+  groupKeys.forEach(tagKey => {
+    const groupItems = groupMap[tagKey];
+    const bigItems = groupItems.filter(i => i.duration >= 60).sort((a, b) => b.duration - a.duration);
+    const smallQueue = shuffle(groupItems.filter(i => i.duration < 60));
+
+    // 大きい項目（60分以上）は単独ブロックとして専有
+    bigItems.forEach(item => {
+      const neededHours = Math.ceil(item.duration / 60);
+      const start = findAvailableStart(neededHours, usedSlots);
+      if (start === null) {
+        warningItems.push(`${item.place}（${item.duration}分）`);
+        return;
+      }
+      markUsedHours(start, neededHours, usedSlots);
+      blocks.push({
+        tag: tagKey,
+        startTime: start,
+        capacityMinutes: neededHours * 60,
+        entries: [makeEntry(item, start, start + item.duration / 60)]
+      });
+    });
+
+    // 小さい項目（60分未満）は同じタグ同士でまとめて1時間枠に詰め込む（無理に埋めない）
+    while (smallQueue.length > 0) {
+      const hour = findNextFreeHour(usedSlots);
+      if (hour === null) {
+        smallQueue.forEach(item => warningItems.push(`${item.place}（${item.duration}分）`));
+        break;
+      }
+      usedSlots.add(hour);
+
+      const entries = [];
+      let usedMinutes = 0;
+      while (smallQueue.length > 0 && usedMinutes + smallQueue[0].duration <= 60) {
+        const item = smallQueue.shift();
+        const entryStart = hour + usedMinutes / 60;
+        const entryEnd = hour + (usedMinutes + item.duration) / 60;
+        entries.push(makeEntry(item, entryStart, entryEnd));
+        usedMinutes += item.duration;
+      }
+
+      if (entries.length === 0) {
+        // このタグの残り項目が単体で60分を超えて入らないケース（基本的には発生しない想定）
+        const item = smallQueue.shift();
+        warningItems.push(`${item.place}（${item.duration}分）`);
+        continue;
+      }
+
+      blocks.push({ tag: tagKey, startTime: hour, capacityMinutes: 60, entries });
+    }
+  });
+
+  // 3. ブロックを時系列順に並べ、タグが切り替わる境目に片付け時間を追加
+  blocks.sort((a, b) => a.startTime - b.startTime);
+
+  const finalSchedule = [];
+  blocks.forEach((block, idx) => {
+    finalSchedule.push(...block.entries);
+
+    const isLastBlock = idx === blocks.length - 1;
+    const nextTag = isLastBlock ? null : blocks[idx + 1].tag;
+    const tagChanges = isLastBlock || nextTag !== block.tag;
+
+    if (tagChanges) {
+      const usedMinutes = block.entries.reduce((sum, e) => sum + e.duration, 0);
+      if (block.capacityMinutes - usedMinutes >= 5) {
+        const cleanupStart = block.startTime + usedMinutes / 60;
+        finalSchedule.push({
+          place: '片付け',
+          startTime: cleanupStart,
+          endTime: cleanupStart + 5 / 60,
+          duration: 5,
+          frequency: null,
+          unit: null,
+          tag: block.tag,
+          lastExecuted: null,
+          itemId: null,
+          isCleanup: true
+        });
+      }
+    }
+  });
+
+  finalSchedule.sort((a, b) => a.startTime - b.startTime);
+  schedule = finalSchedule;
 
   const warningDiv = document.getElementById('warning');
   if (warningItems.length > 0) {
@@ -687,6 +788,19 @@ function renderSchedule() {
   }
 
   container.innerHTML = schedule.map((item) => {
+    if (item.isCleanup) {
+      return `
+        <div class="schedule-card" style="opacity: 0.75;">
+          <div class="schedule-item">
+            <div class="schedule-item-info">
+              <div class="schedule-item-time">${formatTime(item.startTime)} - ${formatTime(item.endTime)}</div>
+              <div class="schedule-item-place">🧹 片付け（${item.duration}分）</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     const nextDeadline = calculateNextDeadline(item.lastExecuted, item.frequency, item.unit);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -777,7 +891,7 @@ function switchTab(tab) {
 
 function updateStats() {
   const total = items.filter(i => i.place).length;
-  const scheduled = schedule.length;
+  const scheduled = schedule.filter(s => !s.isCleanup).length;
   document.getElementById('total-items').textContent = total;
   document.getElementById('today-count').textContent = scheduled;
 }
