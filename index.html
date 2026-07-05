@@ -77,30 +77,6 @@
 <div class="container">
   <h2>🧹 掃除スケジュール自動作成</h2>
 
-  <div class="data-section">
-    <div class="section-title">データのバックアップ（機種変更対応）</div>
-    <div class="button-group">
-      <button class="btn-primary" onclick="exportData()">📤 エクスポート</button>
-      <button onclick="document.getElementById('import-file').click()">📥 インポート</button>
-      <input type="file" id="import-file" accept=".json" onchange="importData(event)" />
-    </div>
-    <div class="data-note">機種変更する前に「エクスポート」でファイルを保存し、新しい端末で「インポート」してください。</div>
-  </div>
-  
-  <div class="data-section">
-    <div class="section-title">タグ管理</div>
-    <div id="tag-manage-list"></div>
-    <div class="data-note" id="tag-empty-note">まだタグがありません。掃除箇所の設定で「＋新しいタグ」から追加できます。</div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">掃除箇所の設定（スケジュール順）</div>
-    <div id="input-list"></div>
-    <button style="width: 100%; margin-top: 12px;" onclick="addInput()">
-      ＋ 掃除箇所を追加
-    </button>
-  </div>
-
   <div class="button-group">
     <button onclick="generateSchedule()">初期作成</button>
     <button onclick="updateSchedule()">スケジュール更新</button>
@@ -137,6 +113,30 @@
     <div id="history-container">
       <div class="empty-state">完了した項目はまだありません</div>
     </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">掃除箇所の設定（スケジュール順）</div>
+    <div id="input-list"></div>
+    <button style="width: 100%; margin-top: 12px;" onclick="addInput()">
+      ＋ 掃除箇所を追加
+    </button>
+  </div>
+
+  <div class="data-section">
+    <div class="section-title">タグ管理</div>
+    <div id="tag-manage-list"></div>
+    <div class="data-note" id="tag-empty-note">まだタグがありません。掃除箇所の設定で「＋新しいタグ」から追加できます。</div>
+  </div>
+
+  <div class="data-section">
+    <div class="section-title">データのバックアップ（機種変更対応）</div>
+    <div class="button-group">
+      <button class="btn-primary" onclick="exportData()">📤 エクスポート</button>
+      <button onclick="document.getElementById('import-file').click()">📥 インポート</button>
+      <input type="file" id="import-file" accept=".json" onchange="importData(event)" />
+    </div>
+    <div class="data-note">機種変更する前に「エクスポート」でファイルを保存し、新しい端末で「インポート」してください。</div>
   </div>
 </div>
 
