@@ -712,9 +712,10 @@ function renderSchedule() {
 function completeItem(itemId, place) {
   const item = items.find(i => i.id === itemId);
   if (item) {
+    const previousLastExecuted = item.lastExecuted;
     item.lastExecuted = new Date();
     saveToStorage();
-    completedHistory.push({ itemId, place, tag: item.tag, completedDate: new Date(), lastExecuted: item.lastExecuted });
+    completedHistory.push({ itemId, place, tag: item.tag, completedDate: new Date(), lastExecuted: item.lastExecuted, previousLastExecuted: previousLastExecuted });
     saveHistoryToStorage();
     schedule = schedule.filter(s => s.itemId !== itemId);
     saveScheduleToStorage();
@@ -727,11 +728,16 @@ function completeItem(itemId, place) {
 function restoreFromHistory(itemId) {
   const historyItem = completedHistory.find(h => h.itemId === itemId);
   if (historyItem) {
+    const item = items.find(i => i.id === itemId);
+    if (item) {
+      item.lastExecuted = historyItem.previousLastExecuted || null;
+      saveToStorage();
+    }
     completedHistory = completedHistory.filter(h => h.itemId !== itemId);
     saveHistoryToStorage();
-    renderSchedule();
+    renderInputs();
+    updateSchedule();
     renderHistory();
-    updateStats();
   }
 }
 
