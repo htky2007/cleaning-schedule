@@ -20,6 +20,11 @@
   .item-card { padding: 12px; background: #fff; border-radius: 12px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .row1 { display: flex; gap: 10px; margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap; }
   .row2 { display: flex; gap: 10px; align-items: flex-end; }
+  .row3 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e0ded4; }
+  .day-toggle-group { display: flex; gap: 4px; }
+  .day-toggle-btn { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 1px solid #ddd; background: #fff; font-size: 12px; cursor: pointer; }
+  .day-toggle-btn.active { background: #4a5568; color: #fff; border-color: #4a5568; }
+  .time-stats-note { font-size: 12px; color: #888; width: 100%; }
   .input-label { font-size: 12px; color: #666; margin-bottom: 4px; display: block; }
   input, select {
     height: 38px; padding: 0 10px; border: 1px solid #ddd; border-radius: 8px;
@@ -164,6 +169,10 @@
   <div class="section">
     <div class="section-title">掃除箇所の設定（タグ別グループ）</div>
     <input type="text" id="search-box" placeholder="🔍 掃除箇所名やタグで検索" style="width: 100%; margin-bottom: 12px;" oninput="onSearchInput(this.value)" />
+    <div class="button-group" style="margin-bottom: 12px;">
+      <button onclick="expandAllGroups()">すべて開く</button>
+      <button onclick="collapseAllGroups()">すべて閉じる</button>
+    </div>
     <div id="input-list"></div>
     <button style="width: 100%; margin-top: 12px;" onclick="addInput()">
       ＋ 掃除箇所を追加
@@ -216,6 +225,16 @@ function saveScheduleToStorage() {
   try { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule)); } catch (e) {}
 }
 
+function normalizeItem(item) {
+  return {
+    ...item,
+    allowedDays: Array.isArray(item.allowedDays) ? item.allowedDays : [],
+    maxDuration: typeof item.maxDuration === 'number' ? item.maxDuration : null,
+    recentDurations: Array.isArray(item.recentDurations) ? item.recentDurations : [],
+    timerStartedAt: item.timerStartedAt || null
+  };
+}
+
 function loadFromStorage() {
   try {
     const tagsRaw = localStorage.getItem(TAGS_KEY);
@@ -223,7 +242,7 @@ function loadFromStorage() {
 
     const itemsRaw = localStorage.getItem(STORAGE_KEY);
     if (itemsRaw) {
-      items = JSON.parse(itemsRaw);
+      items = JSON.parse(itemsRaw).map(normalizeItem);
       renderInputs();
       loadScheduleFromStorage();
     } else {
@@ -258,9 +277,9 @@ function loadScheduleFromStorage() {
 
 function initializeWithData() {
   items = [
-    { id: 1, place: 'トイレ掃除', frequency: 2, unit: 'week', duration: 30, preferredTimes: '', tag: '', lastExecuted: null },
-    { id: 2, place: '車洗車', frequency: 2, unit: 'week', duration: 120, preferredTimes: '9,10', tag: '', lastExecuted: null },
-    { id: 3, place: 'お風呂掃除', frequency: 1, unit: 'week', duration: 15, preferredTimes: '', tag: '', lastExecuted: null },
+    { id: 1, place: 'トイレ掃除', frequency: 2, unit: 'week', duration: 30, preferredTimes: '', tag: '', lastExecuted: null, allowedDays: [], maxDuration: null, recentDurations: [], timerStartedAt: null },
+    { id: 2, place: '車洗車', frequency: 2, unit: 'week', duration: 120, preferredTimes: '9,10', tag: '', lastExecuted: null, allowedDays: [], maxDuration: null, recentDurations: [], timerStartedAt: null },
+    { id: 3, place: 'お風呂掃除', frequency: 1, unit: 'week', duration: 15, preferredTimes: '', tag: '', lastExecuted: null, allowedDays: [], maxDuration: null, recentDurations: [], timerStartedAt: null },
   ];
   renderInputs();
   updateSchedule();
@@ -301,7 +320,7 @@ function importData(event) {
         return;
       }
 
-      items = data.items || [];
+      items = (data.items || []).map(normalizeItem);
       schedule = (data.schedule || []).map(s => ({ ...s, lastExecuted: s.lastExecuted ? new Date(s.lastExecuted) : null }));
       completedHistory = data.completedHistory || [];
       tags = data.tags || [];
@@ -328,7 +347,7 @@ function importData(event) {
 }
 
 function addInput() {
-  items.push({ id: Date.now(), place: '', frequency: 1, unit: 'month', duration: 60, preferredTimes: '', tag: '', lastExecuted: null });
+  items.push({ id: Date.now(), place: '', frequency: 1, unit: 'month', duration: 60, preferredTimes: '', tag: '', lastExecuted: null, allowedDays: [], maxDuration: null, recentDurations: [], timerStartedAt: null });
   renderInputs();
   saveToStorage();
 }
@@ -394,6 +413,19 @@ function itemCardHtml(item) {
           </button>
         `}
       </div>
+      <div class="row3">
+        <label class="input-label" style="width: 100%;">曜日指定（未選択なら毎日OK）</label>
+        <div class="day-toggle-group">
+          ${['日','月','火','水','木','金','土'].map((label, dayIdx) => `
+            <button type="button" class="day-toggle-btn ${(item.allowedDays || []).includes(dayIdx) ? 'active' : ''}" onclick="toggleAllowedDay(${item.id}, ${dayIdx})">${label}</button>
+          `).join('')}
+        </div>
+        ${(item.maxDuration || (item.recentDurations && item.recentDurations.length > 0)) ? `
+          <div class="time-stats-note">
+            ⏱️ ${item.maxDuration ? `最大 ${item.maxDuration}分` : ''}${item.maxDuration && item.recentDurations && item.recentDurations.length > 0 ? ' ｜ ' : ''}${item.recentDurations && item.recentDurations.length > 0 ? `直近平均 ${Math.round(item.recentDurations.reduce((a,b)=>a+b,0) / item.recentDurations.length)}分` : ''}
+          </div>
+        ` : ''}
+      </div>
     </div>
   `;
 }
@@ -409,6 +441,26 @@ function toggleGroup(key) {
   } else {
     collapsedGroups.add(key);
   }
+  renderInputs();
+}
+
+function getAllGroupKeysWithItems() {
+  const keys = new Set();
+  items.forEach(item => {
+    if (!item.place) return;
+    const key = item.tag && tags.includes(item.tag) ? item.tag : '';
+    keys.add(key);
+  });
+  return [...keys];
+}
+
+function expandAllGroups() {
+  collapsedGroups = new Set();
+  renderInputs();
+}
+
+function collapseAllGroups() {
+  collapsedGroups = new Set(getAllGroupKeysWithItems());
   renderInputs();
 }
 
@@ -471,6 +523,20 @@ function updateItem(id, field, value) {
   renderInputs();
 }
 
+function toggleAllowedDay(id, dayIdx) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  if (!Array.isArray(item.allowedDays)) item.allowedDays = [];
+  const idx = item.allowedDays.indexOf(dayIdx);
+  if (idx === -1) {
+    item.allowedDays.push(dayIdx);
+  } else {
+    item.allowedDays.splice(idx, 1);
+  }
+  saveToStorage();
+  renderInputs();
+}
+
 function deleteItem(id) {
   items = items.filter(i => i.id !== id);
   renderInputs();
@@ -480,7 +546,7 @@ function deleteItem(id) {
 function duplicateItem(id) {
   const item = items.find(i => i.id === id);
   if (!item) return;
-  const copy = { ...item, id: Date.now(), lastExecuted: null };
+  const copy = { ...item, id: Date.now(), lastExecuted: null, maxDuration: null, recentDurations: [], timerStartedAt: null, allowedDays: [...(item.allowedDays || [])] };
   const index = items.findIndex(i => i.id === id);
   items.splice(index + 1, 0, copy);
   renderInputs();
@@ -679,6 +745,10 @@ function canFitHours(startTime, neededHours) {
 }
 
 function shouldIncludeInSchedule(item, today) {
+  // 曜日指定がある場合、今日がその曜日でなければスケジュールに含めない
+  if (Array.isArray(item.allowedDays) && item.allowedDays.length > 0) {
+    if (!item.allowedDays.includes(today.getDay())) return false;
+  }
   if (!item.lastExecuted) return true;
   const lastDate = new Date(item.lastExecuted);
   const deadline = new Date(lastDate);
@@ -988,6 +1058,29 @@ function renderSchedule() {
     today.setHours(0, 0, 0, 0);
     const daysUntil = Math.ceil((nextDeadline - today) / (1000 * 60 * 60 * 24));
     const lastExecutedStr = item.lastExecuted ? new Date(item.lastExecuted).toLocaleDateString('ja-JP') : '未実施';
+
+    const liveItem = items.find(i => i.id === item.itemId);
+    const isTiming = liveItem && liveItem.timerStartedAt;
+    let timeStatsHtml = '';
+    if (liveItem && (liveItem.maxDuration || (liveItem.recentDurations && liveItem.recentDurations.length > 0))) {
+      const avg = liveItem.recentDurations && liveItem.recentDurations.length > 0
+        ? Math.round(liveItem.recentDurations.reduce((a, b) => a + b, 0) / liveItem.recentDurations.length)
+        : null;
+      timeStatsHtml = `<div class="time-stats-note">⏱️ ${liveItem.maxDuration ? `最大 ${liveItem.maxDuration}分` : ''}${liveItem.maxDuration && avg !== null ? ' ｜ ' : ''}${avg !== null ? `直近平均 ${avg}分` : ''}</div>`;
+    }
+
+    let actionButtonsHtml;
+    if (isTiming) {
+      const elapsedSec = Math.max(0, Math.floor((Date.now() - liveItem.timerStartedAt) / 1000));
+      const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+      const ss = String(elapsedSec % 60).padStart(2, '0');
+      actionButtonsHtml = `<button class="schedule-item-button btn-confirm" onclick="stopTimerAndComplete(${item.itemId}, '${item.place.replace(/'/g, "\\'")}')">⏱️ 終了（${mm}:${ss}）</button>`;
+    } else {
+      actionButtonsHtml = `
+        <button class="schedule-item-button" onclick="startTimer(${item.itemId})">⏱️ 着手</button>
+        <button class="schedule-item-button" onclick="completeItem(${item.itemId}, '${item.place.replace(/'/g, "\\'")}')">実施</button>
+      `;
+    }
     
     return `
       <div class="schedule-card">
@@ -997,19 +1090,55 @@ function renderSchedule() {
             <div class="schedule-item-place">${item.place}（${item.duration}分）</div>
             ${item.tag ? `<div class="schedule-item-tag">${item.tag}</div>` : ''}
             <div class="schedule-item-days">最終実施：${lastExecutedStr} | 期限：${nextDeadline.toLocaleDateString('ja-JP')}（残り${daysUntil}日）</div>
+            ${timeStatsHtml}
           </div>
-          <button class="schedule-item-button" onclick="completeItem(${item.itemId}, '${item.place}')">実施</button>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
+            ${actionButtonsHtml}
+          </div>
         </div>
       </div>
     `;
   }).join('');
 }
 
+function startTimer(itemId) {
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+  item.timerStartedAt = Date.now();
+  saveToStorage();
+  renderSchedule();
+}
+
+function stopTimerAndComplete(itemId, place) {
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+
+  if (item.timerStartedAt) {
+    const elapsedMinutes = Math.max(1, Math.round((Date.now() - item.timerStartedAt) / 60000));
+    item.maxDuration = Math.max(item.maxDuration || 0, elapsedMinutes);
+    item.recentDurations = [...(item.recentDurations || []), elapsedMinutes].slice(-5);
+    item.timerStartedAt = null;
+    saveToStorage();
+  }
+
+  completeItem(itemId, place);
+}
+
+function tickTimers() {
+  const anyRunning = items.some(i => i.timerStartedAt);
+  if (anyRunning && document.getElementById('schedule-section').style.display !== 'none') {
+    renderSchedule();
+  }
+}
+
+setInterval(tickTimers, 1000);
+
 function completeItem(itemId, place) {
   const item = items.find(i => i.id === itemId);
   if (item) {
     const previousLastExecuted = item.lastExecuted;
     item.lastExecuted = new Date();
+    item.timerStartedAt = null;
     saveToStorage();
     completedHistory.push({ itemId, place, tag: item.tag, completedDate: new Date(), lastExecuted: item.lastExecuted, previousLastExecuted: previousLastExecuted });
     saveHistoryToStorage();
@@ -1129,12 +1258,24 @@ function renderOverview() {
       daysClass = 'soon';
     }
 
+    const dayLabels = ['日','月','火','水','木','金','土'];
+    const dayConstraintStr = (item.allowedDays && item.allowedDays.length > 0)
+      ? `｜ 曜日指定：${item.allowedDays.slice().sort().map(d => dayLabels[d]).join('・')}`
+      : '';
+
+    const avg = item.recentDurations && item.recentDurations.length > 0
+      ? Math.round(item.recentDurations.reduce((a, b) => a + b, 0) / item.recentDurations.length)
+      : null;
+    const timeStatsStr = (item.maxDuration || avg !== null)
+      ? `｜ ⏱️${item.maxDuration ? ` 最大${item.maxDuration}分` : ''}${avg !== null ? ` 直近平均${avg}分` : ''}`
+      : '';
+
     return `
       <div class="overview-item">
         <div class="overview-row">
           <div>
             <div class="overview-place">${item.place}${item.tag ? ` <span class="schedule-item-tag">${item.tag}</span>` : ''}</div>
-            <div class="overview-meta">頻度：${item.frequency}${freqLabel}に1回 ｜ 最終実施：${lastExecutedStr} ｜ 次回期限：${nextDeadline.toLocaleDateString('ja-JP')}</div>
+            <div class="overview-meta">頻度：${item.frequency}${freqLabel}に1回 ｜ 最終実施：${lastExecutedStr} ｜ 次回期限：${nextDeadline.toLocaleDateString('ja-JP')}${dayConstraintStr}${timeStatsStr}</div>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
             <span class="overview-days ${daysClass}">${daysLabel}</span>
