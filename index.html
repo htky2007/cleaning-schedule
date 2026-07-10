@@ -160,7 +160,11 @@
   </div>
 
   <div id="overview-section" class="section" style="display: none;">
-    <div class="section-title">最終実施日・次回期限 一覧（期限が近い順）</div>
+    <div class="section-title">最終実施日・次回期限 一覧（タグ別・期限が近い順）</div>
+    <div class="button-group" style="margin-bottom: 12px;">
+      <button onclick="expandAllOverviewGroups()">すべて開く</button>
+      <button onclick="collapseAllOverviewGroups()">すべて閉じる</button>
+    </div>
     <div id="overview-container">
       <div class="empty-state">掃除箇所がありません</div>
     </div>
@@ -205,6 +209,7 @@ let showingTagInput = null;
 let editingTagName = null;
 let searchQuery = '';
 let collapsedGroups = new Set();
+let collapsedOverviewGroups = new Set();
 
 const STORAGE_KEY = 'cleaningScheduleItems';
 const SCHEDULE_KEY = 'cleaningSchedule';
@@ -1060,27 +1065,8 @@ function renderSchedule() {
     const lastExecutedStr = item.lastExecuted ? new Date(item.lastExecuted).toLocaleDateString('ja-JP') : '未実施';
 
     const liveItem = items.find(i => i.id === item.itemId);
-    const isTiming = liveItem && liveItem.timerStartedAt;
-    let timeStatsHtml = '';
-    if (liveItem && (liveItem.maxDuration || (liveItem.recentDurations && liveItem.recentDurations.length > 0))) {
-      const avg = liveItem.recentDurations && liveItem.recentDurations.length > 0
-        ? Math.round(liveItem.recentDurations.reduce((a, b) => a + b, 0) / liveItem.recentDurations.length)
-        : null;
-      timeStatsHtml = `<div class="time-stats-note">⏱️ ${liveItem.maxDuration ? `最大 ${liveItem.maxDuration}分` : ''}${liveItem.maxDuration && avg !== null ? ' ｜ ' : ''}${avg !== null ? `直近平均 ${avg}分` : ''}</div>`;
-    }
-
-    let actionButtonsHtml;
-    if (isTiming) {
-      const elapsedSec = Math.max(0, Math.floor((Date.now() - liveItem.timerStartedAt) / 1000));
-      const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
-      const ss = String(elapsedSec % 60).padStart(2, '0');
-      actionButtonsHtml = `<button class="schedule-item-button btn-confirm" onclick="stopTimerAndComplete(${item.itemId}, '${item.place.replace(/'/g, "\\'")}')">⏱️ 終了（${mm}:${ss}）</button>`;
-    } else {
-      actionButtonsHtml = `
-        <button class="schedule-item-button" onclick="startTimer(${item.itemId})">⏱️ 着手</button>
-        <button class="schedule-item-button" onclick="completeItem(${item.itemId}, '${item.place.replace(/'/g, "\\'")}')">実施</button>
-      `;
-    }
+    const timeStatsHtml = timeStatsNoteHtml(liveItem);
+    const actionButtonsHtml = taskActionButtonsHtml(liveItem, item.itemId, item.place);
     
     return `
       <div class="schedule-card">
@@ -1099,6 +1085,29 @@ function renderSchedule() {
       </div>
     `;
   }).join('');
+}
+
+function timeStatsNoteHtml(liveItem) {
+  if (!liveItem || !(liveItem.maxDuration || (liveItem.recentDurations && liveItem.recentDurations.length > 0))) return '';
+  const avg = liveItem.recentDurations && liveItem.recentDurations.length > 0
+    ? Math.round(liveItem.recentDurations.reduce((a, b) => a + b, 0) / liveItem.recentDurations.length)
+    : null;
+  return `<div class="time-stats-note">⏱️ ${liveItem.maxDuration ? `最大 ${liveItem.maxDuration}分` : ''}${liveItem.maxDuration && avg !== null ? ' ｜ ' : ''}${avg !== null ? `直近平均 ${avg}分` : ''}</div>`;
+}
+
+function taskActionButtonsHtml(liveItem, itemId, place) {
+  const safePlace = place.replace(/'/g, "\\'");
+  const isTiming = liveItem && liveItem.timerStartedAt;
+  if (isTiming) {
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - liveItem.timerStartedAt) / 1000));
+    const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+    const ss = String(elapsedSec % 60).padStart(2, '0');
+    return `<button class="schedule-item-button btn-confirm" onclick="stopTimerAndComplete(${itemId}, '${safePlace}')">⏱️ 終了（${mm}:${ss}）</button>`;
+  }
+  return `
+    <button class="schedule-item-button" onclick="startTimer(${itemId})">⏱️ 着手</button>
+    <button class="schedule-item-button" onclick="completeItem(${itemId}, '${safePlace}')">実施</button>
+  `;
 }
 
 function startTimer(itemId) {
@@ -1126,8 +1135,12 @@ function stopTimerAndComplete(itemId, place) {
 
 function tickTimers() {
   const anyRunning = items.some(i => i.timerStartedAt);
-  if (anyRunning && document.getElementById('schedule-section').style.display !== 'none') {
+  if (!anyRunning) return;
+  if (document.getElementById('schedule-section').style.display !== 'none') {
     renderSchedule();
+  }
+  if (document.getElementById('overview-section').style.display !== 'none') {
+    renderOverview();
   }
 }
 
@@ -1243,52 +1256,117 @@ function renderOverview() {
     return { item, nextDeadline, daysUntil };
   });
 
-  withDeadline.sort((a, b) => a.daysUntil - b.daysUntil);
+  // タググループ化（「掃除箇所の設定」と同じ並び：登録済みタグ順 → タグなし）
+  const groupOrder = [...tags, ''];
+  const groupedMap = {};
+  withDeadline.forEach(entry => {
+    const key = entry.item.tag && tags.includes(entry.item.tag) ? entry.item.tag : '';
+    if (!groupedMap[key]) groupedMap[key] = [];
+    groupedMap[key].push(entry);
+  });
 
-  container.innerHTML = withDeadline.map(({ item, nextDeadline, daysUntil }) => {
-    const lastExecutedStr = item.lastExecuted ? new Date(item.lastExecuted).toLocaleDateString('ja-JP') : '未実施';
-    const freqLabel = item.unit === 'week' ? '週間' : 'ヶ月';
+  const html = [];
 
-    let daysClass = 'ok';
-    let daysLabel = `残り${daysUntil}日`;
-    if (daysUntil < 0) {
-      daysClass = 'overdue';
-      daysLabel = `${Math.abs(daysUntil)}日超過`;
-    } else if (daysUntil <= 2) {
-      daysClass = 'soon';
+  groupOrder.forEach(key => {
+    const groupEntries = groupedMap[key];
+    if (!groupEntries || groupEntries.length === 0) return;
+
+    groupEntries.sort((a, b) => a.daysUntil - b.daysUntil);
+
+    const isCollapsed = collapsedOverviewGroups.has(key);
+    const groupLabel = key || 'タグなし';
+    const icon = isCollapsed ? '▶' : '▼';
+    const minDays = groupEntries[0].daysUntil;
+    let urgentBadgeClass = 'ok';
+    let urgentBadgeLabel = `最短 残り${minDays}日`;
+    if (minDays < 0) {
+      urgentBadgeClass = 'overdue';
+      urgentBadgeLabel = `最短 ${Math.abs(minDays)}日超過`;
+    } else if (minDays <= 2) {
+      urgentBadgeClass = 'soon';
     }
 
-    const dayLabels = ['日','月','火','水','木','金','土'];
-    const dayConstraintStr = (item.allowedDays && item.allowedDays.length > 0)
-      ? `｜ 曜日指定：${item.allowedDays.slice().sort().map(d => dayLabels[d]).join('・')}`
-      : '';
-
-    const avg = item.recentDurations && item.recentDurations.length > 0
-      ? Math.round(item.recentDurations.reduce((a, b) => a + b, 0) / item.recentDurations.length)
-      : null;
-    const timeStatsStr = (item.maxDuration || avg !== null)
-      ? `｜ ⏱️${item.maxDuration ? ` 最大${item.maxDuration}分` : ''}${avg !== null ? ` 直近平均${avg}分` : ''}`
-      : '';
-
-    return `
-      <div class="overview-item">
-        <div class="overview-row">
-          <div>
-            <div class="overview-place">${item.place}${item.tag ? ` <span class="schedule-item-tag">${item.tag}</span>` : ''}</div>
-            <div class="overview-meta">頻度：${item.frequency}${freqLabel}に1回 ｜ 最終実施：${lastExecutedStr} ｜ 次回期限：${nextDeadline.toLocaleDateString('ja-JP')}${dayConstraintStr}${timeStatsStr}</div>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="overview-days ${daysClass}">${daysLabel}</span>
-            <button class="schedule-item-button" onclick="completeItem(${item.id}, '${item.place.replace(/'/g, "\\'")}')">実施</button>
-          </div>
+    html.push(`
+      <div class="group-items-wrap">
+        <div class="group-header" onclick="toggleOverviewGroup('${key.replace(/'/g, "\\'")}')">
+          <span class="group-toggle-icon">${icon}</span>
+          <span class="group-name">${groupLabel}</span>
+          <span class="overview-days ${urgentBadgeClass}" style="margin-right: 6px;">${urgentBadgeLabel}</span>
+          <span class="group-count">${groupEntries.length}件</span>
         </div>
-        <div class="overview-edit-row">
-          <label>最終実施日を編集：</label>
-          <input type="date" value="${formatDateForInput(item.lastExecuted)}" onchange="updateLastExecutedDate(${item.id}, this.value)" />
+        ${isCollapsed ? '' : groupEntries.map(entry => overviewItemHtml(entry)).join('')}
+      </div>
+    `);
+  });
+
+  container.innerHTML = html.length > 0 ? html.join('') : '<div class="empty-state">掃除箇所がありません</div>';
+}
+
+function toggleOverviewGroup(key) {
+  if (collapsedOverviewGroups.has(key)) {
+    collapsedOverviewGroups.delete(key);
+  } else {
+    collapsedOverviewGroups.add(key);
+  }
+  renderOverview();
+}
+
+function expandAllOverviewGroups() {
+  collapsedOverviewGroups = new Set();
+  renderOverview();
+}
+
+function collapseAllOverviewGroups() {
+  const keys = new Set();
+  items.forEach(item => {
+    if (!item.place) return;
+    const key = item.tag && tags.includes(item.tag) ? item.tag : '';
+    keys.add(key);
+  });
+  collapsedOverviewGroups = new Set([...keys]);
+  renderOverview();
+}
+
+function overviewItemHtml({ item, nextDeadline, daysUntil }) {
+  const lastExecutedStr = item.lastExecuted ? new Date(item.lastExecuted).toLocaleDateString('ja-JP') : '未実施';
+  const freqLabel = item.unit === 'week' ? '週間' : 'ヶ月';
+
+  let daysClass = 'ok';
+  let daysLabel = `残り${daysUntil}日`;
+  if (daysUntil < 0) {
+    daysClass = 'overdue';
+    daysLabel = `${Math.abs(daysUntil)}日超過`;
+  } else if (daysUntil <= 2) {
+    daysClass = 'soon';
+  }
+
+  const dayLabels = ['日','月','火','水','木','金','土'];
+  const dayConstraintStr = (item.allowedDays && item.allowedDays.length > 0)
+    ? `｜ 曜日指定：${item.allowedDays.slice().sort().map(d => dayLabels[d]).join('・')}`
+    : '';
+
+  const timeStatsHtml = timeStatsNoteHtml(item);
+  const actionButtonsHtml = taskActionButtonsHtml(item, item.id, item.place);
+
+  return `
+    <div class="overview-item">
+      <div class="overview-row">
+        <div>
+          <div class="overview-place">${item.place}</div>
+          <div class="overview-meta">頻度：${item.frequency}${freqLabel}に1回 ｜ 最終実施：${lastExecutedStr} ｜ 次回期限：${nextDeadline.toLocaleDateString('ja-JP')}${dayConstraintStr}</div>
+          ${timeStatsHtml}
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+          <span class="overview-days ${daysClass}">${daysLabel}</span>
+          ${actionButtonsHtml}
         </div>
       </div>
-    `;
-  }).join('');
+      <div class="overview-edit-row">
+        <label>最終実施日を編集：</label>
+        <input type="date" value="${formatDateForInput(item.lastExecuted)}" onchange="updateLastExecutedDate(${item.id}, this.value)" />
+      </div>
+    </div>
+  `;
 }
 
 function updateStats() {
