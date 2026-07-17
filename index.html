@@ -52,6 +52,8 @@
   .schedule-item-days { font-size: 12px; color: #888; margin-top: 4px; }
   .schedule-item-button { padding: 8px 14px; background: #fff; border: 1px solid #999; border-radius: 8px; cursor: pointer; font-size: 13px; }
   .schedule-item-button:hover { background: #f0f0f0; }
+  .schedule-item-button.btn-confirm { background: #4a5568; color: #fff; border: none; }
+  .schedule-item-button.btn-confirm:hover { background: #2d3748; }
   .empty-state { text-align: center; padding: 2rem 1rem; color: #999; font-size: 14px; }
   .stats { display: flex; gap: 10px; margin-bottom: 1.5rem; flex-wrap: wrap; }
   .stat-card { flex: 1; min-width: 120px; background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 1rem; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
@@ -834,32 +836,85 @@ function buildSchedule(validItems, skipNotReady = false) {
   // 期限が近い（＝緊急度が高い）項目を優先的に処理する（同着はランダム）
   const itemsWithPreferred = sortByUrgencyWithRandomTiebreak(itemsWithPreferredRaw, today);
 
-  // 1. 推奨時間帯がある項目を優先配置（それぞれ単独ブロック）
+  // 1. 推奨時間帯がある項目を配置（同じタグ・同じ時間帯なら1時間にまとめる）
+  // タグでグループ化しつつ、緊急度の高いグループから処理する
+  const preferredGroupMap = {};
   itemsWithPreferred.forEach(item => {
-    const preferred = shuffle(parsePreferredTimes(item.preferredTimes));
-    const neededHours = computeNeededHoursWithBuffer(item.duration);
-    let placed = false;
+    const key = item.tag || '';
+    if (!preferredGroupMap[key]) preferredGroupMap[key] = [];
+    preferredGroupMap[key].push(item);
+  });
+  const preferredGroupKeys = Object.keys(preferredGroupMap)
+    .map(key => ({ key, minUrgency: Math.min(...preferredGroupMap[key].map(i => getUrgencyDays(i, today))) }))
+    .sort((a, b) => a.minUrgency - b.minUrgency)
+    .map(x => x.key);
 
-    for (let hour of preferred) {
-      if (canFitHours(hour, neededHours)) {
-        let canPlace = true;
-        for (let i = 0; i < neededHours; i++) {
-          if (usedSlots.has(hour + i)) { canPlace = false; break; }
+  preferredGroupKeys.forEach(tagKey => {
+    const groupItems = sortByUrgencyWithRandomTiebreak(preferredGroupMap[tagKey], today);
+
+    groupItems.forEach(item => {
+      const preferred = shuffle(parsePreferredTimes(item.preferredTimes));
+      let placed = false;
+
+      if (item.duration < 60) {
+        // 小さい項目：同じタグ・同じ時間帯の既存ブロックに空きがあれば相乗り
+        for (let hour of preferred) {
+          if (hour < 9 || hour > 17) continue;
+
+          const existingBlock = blocks.find(b =>
+            b.startTime === hour &&
+            b.tag === tagKey &&
+            !b.isDedicated &&
+            b.entries.reduce((sum, e) => sum + e.duration, 0) + item.duration <= 60
+          );
+
+          if (existingBlock) {
+            const usedMinutes = existingBlock.entries.reduce((sum, e) => sum + e.duration, 0);
+            existingBlock.entries.push(makeEntry(item, hour + usedMinutes / 60, hour + (usedMinutes + item.duration) / 60));
+            placed = true;
+            break;
+          }
+
+          if (!usedSlots.has(hour) && canFitHours(hour, 1)) {
+            usedSlots.add(hour);
+            blocks.push({
+              tag: tagKey,
+              startTime: hour,
+              capacityMinutes: 60,
+              isDedicated: false,
+              entries: [makeEntry(item, hour, hour + item.duration / 60)]
+            });
+            placed = true;
+            break;
+          }
         }
-        if (canPlace) {
-          markUsedHours(hour, neededHours, usedSlots);
-          blocks.push({
-            tag: item.tag || '',
-            startTime: hour,
-            capacityMinutes: neededHours * 60,
-            entries: [makeEntry(item, hour, hour + item.duration / 60)]
-          });
-          placed = true;
-          break;
+      } else {
+        // 60分以上の項目：単独で専有（片付け余白も考慮）
+        const neededHours = computeNeededHoursWithBuffer(item.duration);
+        for (let hour of preferred) {
+          if (canFitHours(hour, neededHours)) {
+            let canPlace = true;
+            for (let i = 0; i < neededHours; i++) {
+              if (usedSlots.has(hour + i)) { canPlace = false; break; }
+            }
+            if (canPlace) {
+              markUsedHours(hour, neededHours, usedSlots);
+              blocks.push({
+                tag: tagKey,
+                startTime: hour,
+                capacityMinutes: neededHours * 60,
+                isDedicated: true,
+                entries: [makeEntry(item, hour, hour + item.duration / 60)]
+              });
+              placed = true;
+              break;
+            }
+          }
         }
       }
-    }
-    if (!placed) warningItems.push(`${item.place}（推奨時間帯：${preferred.join(',')}）`);
+
+      if (!placed) warningItems.push(`${item.place}（推奨時間帯：${preferred.join(',')}）`);
+    });
   });
 
   // 2. 推奨時間帯がない項目をタグでグループ化
@@ -1166,19 +1221,101 @@ function completeItem(itemId, place) {
   }
 }
 
+function insertItemIntoExistingSchedule(item) {
+  const tagKey = item.tag || '';
+  const preferred = parsePreferredTimes(item.preferredTimes) || [];
+
+  // 現在のスケジュールが占有している時間帯を把握
+  const usedHours = new Set();
+  schedule.forEach(e => {
+    const startHour = Math.floor(e.startTime + 1e-9);
+    const endHour = Math.ceil(e.endTime - 1e-9);
+    for (let h = startHour; h < endHour; h++) usedHours.add(h);
+  });
+
+  const hourBucketEntries = (hour) => schedule.filter(e => !e.isCleanup && Math.floor(e.startTime + 1e-9) === hour);
+
+  let placedEntry = null;
+
+  if (item.duration < 60) {
+    const candidateHours = preferred.length > 0 ? preferred : Array.from({ length: 9 }, (_, i) => 9 + i);
+
+    // 同じタグの既存枠に空きがあれば相乗り
+    for (let hour of candidateHours) {
+      if (hour < 9 || hour > 17) continue;
+      const bucket = hourBucketEntries(hour);
+      if (bucket.length > 0) {
+        const bucketTag = bucket[0].tag || '';
+        const usedMinutes = bucket.reduce((s, e) => s + e.duration, 0);
+        if (bucketTag === tagKey && usedMinutes + item.duration <= 60) {
+          placedEntry = makeEntry(item, hour + usedMinutes / 60, hour + (usedMinutes + item.duration) / 60);
+          break;
+        }
+      }
+    }
+    // 空いている時間があれば新規配置
+    if (!placedEntry) {
+      for (let hour of candidateHours) {
+        if (hour < 9 || hour > 17) continue;
+        if (!usedHours.has(hour)) {
+          placedEntry = makeEntry(item, hour, hour + item.duration / 60);
+          break;
+        }
+      }
+    }
+    // 推奨時間帯がどうしても空いてない場合、他の時間で妥協
+    if (!placedEntry && preferred.length > 0) {
+      for (let hour = 9; hour <= 17; hour++) {
+        if (!usedHours.has(hour)) {
+          placedEntry = makeEntry(item, hour, hour + item.duration / 60);
+          break;
+        }
+      }
+    }
+  } else {
+    const neededHours = computeNeededHoursWithBuffer(item.duration);
+    const candidateHours = preferred.length > 0 ? preferred : Array.from({ length: 9 }, (_, i) => 9 + i);
+    for (let hour of candidateHours) {
+      if (!canFitHours(hour, neededHours)) continue;
+      let ok = true;
+      for (let i = 0; i < neededHours; i++) { if (usedHours.has(hour + i)) { ok = false; break; } }
+      if (ok) { placedEntry = makeEntry(item, hour, hour + item.duration / 60); break; }
+    }
+  }
+
+  if (placedEntry) {
+    schedule.push(placedEntry);
+    schedule.sort((a, b) => a.startTime - b.startTime);
+    saveScheduleToStorage();
+    return true;
+  }
+  return false;
+}
+
 function restoreFromHistory(itemId) {
   const historyItem = completedHistory.find(h => h.itemId === itemId);
   if (historyItem) {
     const item = items.find(i => i.id === itemId);
+    let inserted = false;
     if (item) {
       item.lastExecuted = historyItem.previousLastExecuted || null;
       saveToStorage();
+      inserted = insertItemIntoExistingSchedule(item);
     }
     completedHistory = completedHistory.filter(h => h.itemId !== itemId);
     saveHistoryToStorage();
     renderInputs();
-    updateSchedule();
+    renderSchedule();
+    updateStats();
     renderHistory();
+    if (document.getElementById('overview-section').style.display !== 'none') {
+      renderOverview();
+    }
+    if (!inserted) {
+      const warningDiv = document.getElementById('warning');
+      warningDiv.innerHTML = `<div class="warning-message">⚠️ 「${item ? item.place : ''}」を今日のスケジュールに空き時間が見つからず追加できませんでした。「スケジュール更新」を試してください。</div>`;
+      warningDiv.style.display = 'block';
+    }
   }
 }
 
