@@ -626,10 +626,10 @@ function updateItem(id, field, value) {
   const item = items.find(i => i.id === id);
   if (item) item[field] = value;
   saveToStorage();
-  // タグ・推奨時間帯はグループ分け／並び順に影響するので再描画が必要。
-  // それ以外（名前・頻度・時間など）は再描画するとiOSでキーボードが閉じて
-  // 入力しづらくなるため、データ保存のみに留める。
-  if (field === 'tag' || field === 'preferredTimes') {
+  // タグはグループ分けに直結するプルダウン操作なので即時反映してOK（キーボードは出ないため）。
+  // 推奨時間帯・名前・頻度・時間などのテキスト入力は、再描画するとiOSでキーボードが
+  // 閉じて連続入力しづらくなるため、データ保存のみに留める（並び順は次回描画時に反映）。
+  if (field === 'tag') {
     renderInputs();
   }
 }
