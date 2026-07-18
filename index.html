@@ -1923,20 +1923,26 @@ function startRowDrag(row, list, e) {
   function onMove(ev) {
     const y = ev.clientY;
     const siblings = Array.from(list.children).filter(el => el !== row);
+
+    // カーソルの位置から「本来入るべき場所」を毎回ゼロから計算する
+    // （前回からの差分ではなく絶対位置で判定するので、速い操作でもズレない）
+    let targetSibling = null;
     for (const sib of siblings) {
       const rect = sib.getBoundingClientRect();
       const mid = rect.top + rect.height / 2;
-      // sibIsBelow: sib が今このrowより後ろ（下）にあるかどうか
-      const sibIsBelow = !!(row.compareDocumentPosition(sib) & Node.DOCUMENT_POSITION_FOLLOWING);
-      if (sibIsBelow && y > mid) {
-        // 下にドラッグして、下にあるsibの中央を越えたら、そのsibの後ろへ移動
-        list.insertBefore(row, sib.nextSibling);
+      if (y < mid) {
+        targetSibling = sib;
         break;
       }
-      if (!sibIsBelow && y < mid) {
-        // 上にドラッグして、上にあるsibの中央を越えたら、そのsibの前へ移動
-        list.insertBefore(row, sib);
-        break;
+    }
+
+    if (targetSibling) {
+      if (targetSibling !== row.nextSibling && targetSibling !== row) {
+        list.insertBefore(row, targetSibling);
+      }
+    } else {
+      if (row !== list.lastElementChild) {
+        list.appendChild(row);
       }
     }
   }
