@@ -79,7 +79,7 @@
   .drag-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px dashed #eee; background: #fff; }
   .drag-row:last-child { border-bottom: none; }
   .drag-row.dragging { opacity: 0.5; background: #fafaf5; }
-  .drag-handle { font-size: 18px; color: #bbb; padding: 10px 6px; cursor: grab; touch-action: none; flex-shrink: 0; }
+  .drag-handle { font-size: 18px; color: #bbb; padding: 10px 6px; cursor: grab; touch-action: none; flex-shrink: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .drag-row-info { flex: 1; min-width: 0; }
   .drag-row-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex-shrink: 0; }
   .warning-message { background: #fff3e0; color: #e65100; padding: 12px; border-radius: 10px; margin-bottom: 1rem; font-size: 14px; }
@@ -1975,3 +1975,4 @@ loadFromStorage();
 </script>
 </body>
 </html>
+
