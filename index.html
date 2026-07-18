@@ -117,11 +117,18 @@
   .overview-edit-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .overview-edit-row label { font-size: 12px; color: #888; }
   .overview-edit-row input[type="date"] { height: 34px; padding: 0 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
+  #jump-fab-container { position: fixed; bottom: 24px; right: 20px; z-index: 1000; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+  #jump-fab { width: 52px; height: 52px; border-radius: 50%; background: #4a5568; color: #fff; border: none; font-size: 22px; box-shadow: 0 3px 10px rgba(0,0,0,0.25); cursor: pointer; }
+  #jump-fab:active { transform: scale(0.95); }
+  .jump-menu { display: none; flex-direction: column; gap: 6px; background: #fff; border-radius: 12px; padding: 8px; box-shadow: 0 3px 12px rgba(0,0,0,0.2); }
+  .jump-menu.open { display: flex; }
+  .jump-menu button { white-space: nowrap; height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid #ddd; background: #fff; font-size: 13px; cursor: pointer; text-align: left; }
+  .jump-menu button:hover { background: #f0f0f0; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h2>🧹 掃除スケジュール自動作成</h2>
+  <h2 id="jump-schedule">🧹 掃除スケジュール自動作成</h2>
 
   <div class="button-group">
     <button onclick="updateSchedule()">スケジュール更新</button>
@@ -172,7 +179,7 @@
     </div>
   </div>
 
-  <div class="section">
+  <div id="jump-top" class="section">
     <div class="section-title">掃除箇所の設定（タグ別グループ）</div>
     <input type="text" id="search-box" placeholder="🔍 掃除箇所名やタグで検索" style="width: 100%; margin-bottom: 12px;" oninput="onSearchInput(this.value)" />
     <div class="button-group" style="margin-bottom: 12px;">
@@ -185,13 +192,13 @@
     </button>
   </div>
 
-  <div class="data-section">
+  <div id="jump-tags" class="data-section">
     <div class="section-title">タグ管理</div>
     <div id="tag-manage-list"></div>
     <div class="data-note" id="tag-empty-note">まだタグがありません。掃除箇所の設定で「＋新しいタグ」から追加できます。</div>
   </div>
 
-  <div class="data-section">
+  <div id="jump-backup" class="data-section">
     <div class="section-title">データのバックアップ（機種変更対応）</div>
     <div class="button-group">
       <button class="btn-primary" onclick="exportData()">📤 エクスポート</button>
@@ -200,6 +207,17 @@
     </div>
     <div class="data-note">機種変更する前に「エクスポート」でファイルを保存し、新しい端末で「インポート」してください。</div>
   </div>
+</div>
+
+<div id="jump-fab-container">
+  <div id="jump-menu" class="jump-menu">
+    <button onclick="jumpToSection('jump-schedule')">🔝 上へ</button>
+    <button onclick="switchTab('schedule'); jumpToSection('schedule-section')">📅 スケジュール</button>
+    <button onclick="jumpToSection('jump-top')">🧹 掃除箇所設定</button>
+    <button onclick="jumpToSection('jump-tags')">🏷️ タグ管理</button>
+    <button onclick="jumpToSection('jump-backup')">💾 データ</button>
+  </div>
+  <button id="jump-fab" onclick="toggleJumpMenu()">⚡</button>
 </div>
 
 <script>
@@ -1534,6 +1552,18 @@ function clearData() {
     document.getElementById('warning').style.display = 'none';
     addInput();
   }
+}
+
+function toggleJumpMenu() {
+  document.getElementById('jump-menu').classList.toggle('open');
+}
+
+function jumpToSection(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  document.getElementById('jump-menu').classList.remove('open');
 }
 
 loadFromStorage();
