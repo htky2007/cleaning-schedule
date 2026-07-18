@@ -64,6 +64,14 @@
   .schedule-window-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 1rem; font-size: 13px; }
   .schedule-window-row label { font-weight: 600; color: #444; }
   .schedule-window-row select { height: 34px; padding: 0 6px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
+  .suggestion-card { background: linear-gradient(135deg, #fff8ec, #fff3e0); border: 1px solid #ffd699; border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
+  .suggestion-text { font-size: 14px; color: #6b4c1f; line-height: 1.6; margin-bottom: 10px; }
+  .suggestion-buttons { display: flex; gap: 8px; }
+  .suggestion-buttons button { flex: 1; height: 38px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .suggestion-buttons .btn-confirm { background: #e08a2c; color: #fff; border: none; }
+  .suggestion-buttons .btn-confirm:hover { background: #c9761f; }
+  .suggestion-buttons .btn-dismiss { background: #fff; border: 1px solid #ddd; }
+  .suggestion-buttons .btn-dismiss:hover { background: #f5f5f0; }
   .warning-message { background: #fff3e0; color: #e65100; padding: 12px; border-radius: 10px; margin-bottom: 1rem; font-size: 14px; }
   .history-item { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .history-info { flex: 1; }
@@ -170,6 +178,7 @@
     <div id="schedule-container">
       <div class="empty-state">スケジュールを作成してください</div>
     </div>
+    <div id="suggestion-card"></div>
   </div>
 
   <div id="history-section" class="section" style="display: none;">
@@ -244,6 +253,8 @@ let collapsedOverviewGroups = new Set();
 let scheduleStartHour = 9;
 let scheduleEndHour = 18;
 const SCHEDULE_WINDOW_KEY = 'cleaningScheduleWindow';
+let suggestionDismissedDate = null;
+const SUGGESTION_DISMISS_KEY = 'cleaningSuggestionDismissedDate';
 
 const STORAGE_KEY = 'cleaningScheduleItems';
 const SCHEDULE_KEY = 'cleaningSchedule';
@@ -280,15 +291,21 @@ function loadScheduleWindow() {
   updateScheduleWindowUI();
 }
 
-function populateHourSelect(selectEl, maxValue) {
-  selectEl.innerHTML = Array.from({ length: maxValue + 1 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
+const HOUR_SELECT_MIN = 7;
+const HOUR_SELECT_MAX = 22;
+
+function populateHourSelect(selectEl) {
+  selectEl.innerHTML = Array.from({ length: HOUR_SELECT_MAX - HOUR_SELECT_MIN + 1 }, (_, i) => {
+    const h = HOUR_SELECT_MIN + i;
+    return `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`;
+  }).join('');
 }
 
 function updateScheduleWindowUI() {
   const startInput = document.getElementById('schedule-start-hour');
   const endInput = document.getElementById('schedule-end-hour');
-  if (startInput && startInput.options.length === 0) populateHourSelect(startInput, 23);
-  if (endInput && endInput.options.length === 0) populateHourSelect(endInput, 24);
+  if (startInput && startInput.options.length === 0) populateHourSelect(startInput);
+  if (endInput && endInput.options.length === 0) populateHourSelect(endInput);
   if (startInput) startInput.value = scheduleStartHour;
   if (endInput) endInput.value = scheduleEndHour;
   const label = document.getElementById('schedule-window-label');
@@ -302,8 +319,8 @@ function onScheduleWindowChange() {
   let end = parseInt(endInput.value);
   if (isNaN(start)) start = 9;
   if (isNaN(end)) end = 18;
-  start = Math.max(0, Math.min(23, start));
-  end = Math.max(start + 1, Math.min(24, end));
+  start = Math.max(HOUR_SELECT_MIN, Math.min(HOUR_SELECT_MAX - 1, start));
+  end = Math.max(start + 1, Math.min(HOUR_SELECT_MAX, end));
   scheduleStartHour = start;
   scheduleEndHour = end;
   saveScheduleWindow();
@@ -322,6 +339,9 @@ function normalizeItem(item) {
 
 function loadFromStorage() {
   loadScheduleWindow();
+  try {
+    suggestionDismissedDate = localStorage.getItem(SUGGESTION_DISMISS_KEY) || null;
+  } catch (e) {}
   try {
     const tagsRaw = localStorage.getItem(TAGS_KEY);
     if (tagsRaw) tags = JSON.parse(tagsRaw);
@@ -1186,6 +1206,7 @@ function renderSchedule() {
   const container = document.getElementById('schedule-container');
   if (schedule.length === 0) {
     container.innerHTML = '<div class="empty-state">スケジュールを作成してください</div>';
+    checkAndShowSuggestion();
     return;
   }
 
@@ -1230,6 +1251,77 @@ function renderSchedule() {
       </div>
     `;
   }).join('');
+
+  checkAndShowSuggestion();
+}
+
+function getTodayDateStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function checkAndShowSuggestion() {
+  const container = document.getElementById('suggestion-card');
+  if (!container) return;
+
+  const activeTasks = schedule.filter(s => !s.isCleanup);
+  const now = new Date();
+  const currentHourDecimal = now.getHours() + now.getMinutes() / 60;
+  const todayStr = getTodayDateStr();
+
+  // 今日すでに「今日はここまで」を選んでいたら出さない
+  if (suggestionDismissedDate === todayStr) { container.innerHTML = ''; return; }
+  // まだ今日のタスクが残っていたら出さない
+  if (activeTasks.length > 0) { container.innerHTML = ''; return; }
+  // 活動終了時刻を過ぎていたら出さない
+  if (currentHourDecimal >= scheduleEndHour) { container.innerHTML = ''; return; }
+
+  const todayMidnight = new Date();
+  todayMidnight.setHours(0, 0, 0, 0);
+
+  const candidates = items.filter(i => i.place).filter(i => {
+    if (i.lastExecuted) {
+      const led = new Date(i.lastExecuted);
+      if (led >= todayMidnight) return false; // 今日すでにやった項目は除外
+    }
+    if (Array.isArray(i.allowedDays) && i.allowedDays.length > 0 && !i.allowedDays.includes(now.getDay())) return false;
+    return true;
+  });
+
+  if (candidates.length === 0) { container.innerHTML = ''; return; }
+
+  candidates.sort((a, b) => getUrgencyDays(a, todayMidnight) - getUrgencyDays(b, todayMidnight));
+  const suggestion = candidates[0];
+
+  container.innerHTML = `
+    <div class="suggestion-card">
+      <div class="suggestion-text">🎉 順調ですね！時間に余裕がありそうです。<br>「${suggestion.place}」（${suggestion.duration}分）はいかがですか？</div>
+      <div class="suggestion-buttons">
+        <button class="btn-confirm" onclick="acceptSuggestion(${suggestion.id})">＋ 追加する</button>
+        <button class="btn-dismiss" onclick="dismissSuggestion()">今日はここまで</button>
+      </div>
+    </div>
+  `;
+}
+
+function acceptSuggestion(itemId) {
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+  const inserted = insertItemIntoExistingSchedule(item);
+  renderSchedule();
+  updateStats();
+  if (!inserted) {
+    const warningDiv = document.getElementById('warning');
+    warningDiv.innerHTML = `<div class="warning-message">⚠️ 「${item.place}」を追加する空き時間が見つかりませんでした。</div>`;
+    warningDiv.style.display = 'block';
+  }
+}
+
+function dismissSuggestion() {
+  suggestionDismissedDate = getTodayDateStr();
+  try { localStorage.setItem(SUGGESTION_DISMISS_KEY, suggestionDismissedDate); } catch (e) {}
+  const container = document.getElementById('suggestion-card');
+  if (container) container.innerHTML = '';
 }
 
 function timeStatsNoteHtml(liveItem) {
