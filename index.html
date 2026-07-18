@@ -72,6 +72,16 @@
   .suggestion-buttons .btn-confirm:hover { background: #c9761f; }
   .suggestion-buttons .btn-dismiss { background: #fff; border: 1px solid #ddd; }
   .suggestion-buttons .btn-dismiss:hover { background: #f5f5f0; }
+  .group-card { padding: 0.75rem 1rem 0.25rem; }
+  .group-card-header { font-size: 13px; font-weight: 600; color: #555; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 8px; border-bottom: 1px solid #eee; margin-bottom: 4px; }
+  .group-card-hint { font-size: 11px; color: #aaa; font-weight: 400; margin-left: auto; }
+  .drag-list { display: flex; flex-direction: column; }
+  .drag-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px dashed #eee; background: #fff; touch-action: none; }
+  .drag-row:last-child { border-bottom: none; }
+  .drag-row.dragging { opacity: 0.5; background: #fafaf5; }
+  .drag-handle { font-size: 18px; color: #bbb; padding: 10px 6px; cursor: grab; touch-action: none; flex-shrink: 0; }
+  .drag-row-info { flex: 1; min-width: 0; }
+  .drag-row-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex-shrink: 0; }
   .warning-message { background: #fff3e0; color: #e65100; padding: 12px; border-radius: 10px; margin-bottom: 1rem; font-size: 14px; }
   .history-item { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .history-info { flex: 1; }
@@ -1202,6 +1212,85 @@ function autoRemovePastCleanup() {
 
 setInterval(autoRemovePastCleanup, 60000);
 
+function renderSingleTaskCardHtml(item) {
+  const nextDeadline = calculateNextDeadline(item.lastExecuted, item.frequency, item.unit);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysUntil = Math.ceil((nextDeadline - today) / (1000 * 60 * 60 * 24));
+  const lastExecutedStr = item.lastExecuted ? new Date(item.lastExecuted).toLocaleDateString('ja-JP') : '未実施';
+
+  const liveItem = items.find(i => i.id === item.itemId);
+  const timeStatsHtml = timeStatsNoteHtml(liveItem);
+  const actionButtonsHtml = taskActionButtonsHtml(liveItem, item.itemId, item.place);
+
+  return `
+    <div class="schedule-card">
+      <div class="schedule-item">
+        <div class="schedule-item-info">
+          <div class="schedule-item-time">${formatTime(item.startTime)} - ${formatTime(item.endTime)}</div>
+          <div class="schedule-item-place">${item.place}（${item.duration}分）</div>
+          ${item.tag ? `<div class="schedule-item-tag">${item.tag}</div>` : ''}
+          <div class="schedule-item-days">最終実施：${lastExecutedStr} | 期限：${nextDeadline.toLocaleDateString('ja-JP')}（残り${daysUntil}日）</div>
+          ${timeStatsHtml}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
+          ${actionButtonsHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDragRowHtml(item) {
+  const nextDeadline = calculateNextDeadline(item.lastExecuted, item.frequency, item.unit);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysUntil = Math.ceil((nextDeadline - today) / (1000 * 60 * 60 * 24));
+  const lastExecutedStr = item.lastExecuted ? new Date(item.lastExecuted).toLocaleDateString('ja-JP') : '未実施';
+
+  const liveItem = items.find(i => i.id === item.itemId);
+  const timeStatsHtml = timeStatsNoteHtml(liveItem);
+  const actionButtonsHtml = taskActionButtonsHtml(liveItem, item.itemId, item.place);
+
+  return `
+    <div class="drag-row" data-item-id="${item.itemId}">
+      <span class="drag-handle">☰</span>
+      <div class="drag-row-info">
+        <div class="schedule-item-time">${formatTime(item.startTime)} - ${formatTime(item.endTime)}</div>
+        <div class="schedule-item-place">${item.place}（${item.duration}分）</div>
+        <div class="schedule-item-days">最終実施：${lastExecutedStr} | 期限：${nextDeadline.toLocaleDateString('ja-JP')}（残り${daysUntil}日）</div>
+        ${timeStatsHtml}
+      </div>
+      <div class="drag-row-actions">
+        ${actionButtonsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function getScheduleRenderGroups() {
+  const groups = [];
+  let i = 0;
+  while (i < schedule.length) {
+    const entry = schedule[i];
+    if (entry.isCleanup) {
+      groups.push([entry]);
+      i++;
+      continue;
+    }
+    const hour = Math.floor(entry.startTime + 1e-9);
+    const bucket = [entry];
+    let j = i + 1;
+    while (j < schedule.length && !schedule[j].isCleanup && Math.floor(schedule[j].startTime + 1e-9) === hour) {
+      bucket.push(schedule[j]);
+      j++;
+    }
+    groups.push(bucket);
+    i = j;
+  }
+  return groups;
+}
+
 function renderSchedule() {
   const container = document.getElementById('schedule-container');
   if (schedule.length === 0) {
@@ -1210,8 +1299,11 @@ function renderSchedule() {
     return;
   }
 
-  container.innerHTML = schedule.map((item) => {
-    if (item.isCleanup) {
+  const groups = getScheduleRenderGroups();
+
+  container.innerHTML = groups.map(group => {
+    if (group.length === 1 && group[0].isCleanup) {
+      const item = group[0];
       return `
         <div class="schedule-card" style="opacity: 0.75;">
           <div class="schedule-item">
@@ -1224,29 +1316,21 @@ function renderSchedule() {
       `;
     }
 
-    const nextDeadline = calculateNextDeadline(item.lastExecuted, item.frequency, item.unit);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const daysUntil = Math.ceil((nextDeadline - today) / (1000 * 60 * 60 * 24));
-    const lastExecutedStr = item.lastExecuted ? new Date(item.lastExecuted).toLocaleDateString('ja-JP') : '未実施';
+    if (group.length === 1) {
+      return renderSingleTaskCardHtml(group[0]);
+    }
 
-    const liveItem = items.find(i => i.id === item.itemId);
-    const timeStatsHtml = timeStatsNoteHtml(liveItem);
-    const actionButtonsHtml = taskActionButtonsHtml(liveItem, item.itemId, item.place);
-    
+    // 同じ時間枠に複数タスクがある場合：ドラッグで並び替え可能なグループカード
+    const hour = Math.floor(group[0].startTime + 1e-9);
+    const tag = group[0].tag;
     return `
-      <div class="schedule-card">
-        <div class="schedule-item">
-          <div class="schedule-item-info">
-            <div class="schedule-item-time">${formatTime(item.startTime)} - ${formatTime(item.endTime)}</div>
-            <div class="schedule-item-place">${item.place}（${item.duration}分）</div>
-            ${item.tag ? `<div class="schedule-item-tag">${item.tag}</div>` : ''}
-            <div class="schedule-item-days">最終実施：${lastExecutedStr} | 期限：${nextDeadline.toLocaleDateString('ja-JP')}（残り${daysUntil}日）</div>
-            ${timeStatsHtml}
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
-            ${actionButtonsHtml}
-          </div>
+      <div class="schedule-card group-card">
+        <div class="group-card-header">
+          ${formatTime(hour)} - ${formatTime(hour + 1)}（${group.length}件）${tag ? `<span class="schedule-item-tag">${tag}</span>` : ''}
+          <span class="group-card-hint">☰ 長押しで並び替え</span>
+        </div>
+        <div class="drag-list" data-hour="${hour}">
+          ${group.map(item => renderDragRowHtml(item)).join('')}
         </div>
       </div>
     `;
@@ -1813,6 +1897,78 @@ function initFabDrag() {
   });
 }
 
+// ===== 同じ時間枠内でのドラッグ並び替え =====
+function initDragReorder() {
+  const container = document.getElementById('schedule-container');
+  if (!container) return;
+
+  container.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest('.drag-handle');
+    if (!handle) return;
+    const row = handle.closest('.drag-row');
+    const list = handle.closest('.drag-list');
+    if (!row || !list) return;
+    startRowDrag(row, list, e);
+  });
+}
+
+function startRowDrag(row, list, e) {
+  e.preventDefault();
+  try { row.setPointerCapture(e.pointerId); } catch (err) {}
+  row.classList.add('dragging');
+
+  function onMove(ev) {
+    const y = ev.clientY;
+    const siblings = Array.from(list.children).filter(el => el !== row);
+    for (const sib of siblings) {
+      const rect = sib.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      const rowIsBefore = !!(row.compareDocumentPosition(sib) & Node.DOCUMENT_POSITION_FOLLOWING);
+      if (y < mid && rowIsBefore) {
+        list.insertBefore(row, sib);
+        break;
+      }
+      if (y > mid && !rowIsBefore) {
+        list.insertBefore(row, sib.nextSibling);
+        break;
+      }
+    }
+  }
+
+  function onUp() {
+    row.classList.remove('dragging');
+    row.removeEventListener('pointermove', onMove);
+    row.removeEventListener('pointerup', onUp);
+    row.removeEventListener('pointercancel', onUp);
+    commitRowOrder(list);
+  }
+
+  row.addEventListener('pointermove', onMove);
+  row.addEventListener('pointerup', onUp);
+  row.addEventListener('pointercancel', onUp);
+}
+
+function commitRowOrder(list) {
+  const hour = parseFloat(list.dataset.hour);
+  const orderedIds = Array.from(list.children).map(el => parseInt(el.dataset.itemId));
+
+  const bucketEntries = orderedIds
+    .map(id => schedule.find(s => !s.isCleanup && s.itemId === id && Math.floor(s.startTime + 1e-9) === hour))
+    .filter(Boolean);
+
+  let cursorMinutes = 0;
+  bucketEntries.forEach(entry => {
+    entry.startTime = hour + cursorMinutes / 60;
+    entry.endTime = hour + (cursorMinutes + entry.duration) / 60;
+    cursorMinutes += entry.duration;
+  });
+
+  schedule.sort((a, b) => a.startTime - b.startTime);
+  saveScheduleToStorage();
+  renderSchedule();
+}
+
+initDragReorder();
 initFabDrag();
 
 loadFromStorage();
