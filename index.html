@@ -1917,48 +1917,69 @@ function initDragReorder() {
 function startRowDrag(row, list, e) {
   e.preventDefault();
   try { row.setPointerCapture(e.pointerId); } catch (err) {}
+
+  // ドラッグ中に他の要素の並びを実際には動かさない（＝指を掴んでいる状態＝pointer captureが
+  // 途中で途切れる原因になっていたため）。代わりに、指の位置に合わせて見た目だけ追従させ、
+  // 指を離した瞬間に1回だけ本当の並び替えを行う。
+  const siblings = Array.from(list.children);
+  const startY = e.clientY;
+
   row.classList.add('dragging');
+  row.style.position = 'relative';
+  row.style.zIndex = '10';
   isDraggingRow = true;
+  list.style.touchAction = 'none';
+  row.style.touchAction = 'none';
+
+  let handled = false;
 
   function onMove(ev) {
-    const y = ev.clientY;
-    const siblings = Array.from(list.children).filter(el => el !== row);
-
-    // カーソルの位置から「本来入るべき場所」を毎回ゼロから計算する
-    // （前回からの差分ではなく絶対位置で判定するので、速い操作でもズレない）
-    let targetSibling = null;
-    for (const sib of siblings) {
-      const rect = sib.getBoundingClientRect();
-      const mid = rect.top + rect.height / 2;
-      if (y < mid) {
-        targetSibling = sib;
-        break;
-      }
-    }
-
-    if (targetSibling) {
-      if (targetSibling !== row.nextSibling && targetSibling !== row) {
-        list.insertBefore(row, targetSibling);
-      }
-    } else {
-      if (row !== list.lastElementChild) {
-        list.appendChild(row);
-      }
-    }
+    const deltaY = ev.clientY - startY;
+    row.style.transform = `translateY(${deltaY}px)`;
   }
 
-  function onUp() {
-    row.classList.remove('dragging');
-    isDraggingRow = false;
+  function onUp(ev) {
+    if (handled) return;
+    handled = true;
+
     row.removeEventListener('pointermove', onMove);
     row.removeEventListener('pointerup', onUp);
     row.removeEventListener('pointercancel', onUp);
+
+    const finalY = (ev && typeof ev.clientY === 'number') ? ev.clientY : startY;
+
+    // 見た目のスタイルを元に戻す
+    row.style.transform = '';
+    row.style.position = '';
+    row.style.zIndex = '';
+    row.classList.remove('dragging');
+    isDraggingRow = false;
+    list.style.touchAction = '';
+    row.style.touchAction = '';
+
+    // 最終的な指の位置から、入れる場所を1回だけ決定する
+    let targetSibling = null;
+    for (const sib of siblings) {
+      if (sib === row) continue;
+      const rect = sib.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      if (finalY < mid) { targetSibling = sib; break; }
+    }
+
+    if (targetSibling) {
+      list.insertBefore(row, targetSibling);
+    } else {
+      list.appendChild(row);
+    }
+
     commitRowOrder(list);
   }
 
   row.addEventListener('pointermove', onMove);
   row.addEventListener('pointerup', onUp);
   row.addEventListener('pointercancel', onUp);
+  // 保険：何らかの理由でcaptureが失われた場合も必ず後片付けする
+  row.addEventListener('lostpointercapture', onUp, { once: true });
 }
 
 function commitRowOrder(list) {
