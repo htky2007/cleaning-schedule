@@ -258,6 +258,7 @@ let tags = [];
 let showingTagInput = null;
 let editingTagName = null;
 let searchQuery = '';
+let isDraggingRow = false;
 let collapsedGroups = new Set();
 let collapsedOverviewGroups = new Set();
 let scheduleStartHour = 9;
@@ -1455,6 +1456,7 @@ function stopTimerAndComplete(itemId, place) {
 }
 
 function tickTimers() {
+  if (isDraggingRow) return;
   const anyRunning = items.some(i => i.timerStartedAt);
   if (!anyRunning) return;
   if (document.getElementById('schedule-section').style.display !== 'none') {
@@ -1916,6 +1918,7 @@ function startRowDrag(row, list, e) {
   e.preventDefault();
   try { row.setPointerCapture(e.pointerId); } catch (err) {}
   row.classList.add('dragging');
+  isDraggingRow = true;
 
   function onMove(ev) {
     const y = ev.clientY;
@@ -1923,13 +1926,16 @@ function startRowDrag(row, list, e) {
     for (const sib of siblings) {
       const rect = sib.getBoundingClientRect();
       const mid = rect.top + rect.height / 2;
-      const rowIsBefore = !!(row.compareDocumentPosition(sib) & Node.DOCUMENT_POSITION_FOLLOWING);
-      if (y < mid && rowIsBefore) {
-        list.insertBefore(row, sib);
+      // sibIsBelow: sib が今このrowより後ろ（下）にあるかどうか
+      const sibIsBelow = !!(row.compareDocumentPosition(sib) & Node.DOCUMENT_POSITION_FOLLOWING);
+      if (sibIsBelow && y > mid) {
+        // 下にドラッグして、下にあるsibの中央を越えたら、そのsibの後ろへ移動
+        list.insertBefore(row, sib.nextSibling);
         break;
       }
-      if (y > mid && !rowIsBefore) {
-        list.insertBefore(row, sib.nextSibling);
+      if (!sibIsBelow && y < mid) {
+        // 上にドラッグして、上にあるsibの中央を越えたら、そのsibの前へ移動
+        list.insertBefore(row, sib);
         break;
       }
     }
@@ -1937,6 +1943,7 @@ function startRowDrag(row, list, e) {
 
   function onUp() {
     row.classList.remove('dragging');
+    isDraggingRow = false;
     row.removeEventListener('pointermove', onMove);
     row.removeEventListener('pointerup', onUp);
     row.removeEventListener('pointercancel', onUp);
@@ -1975,4 +1982,3 @@ loadFromStorage();
 </script>
 </body>
 </html>
-
