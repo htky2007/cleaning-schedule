@@ -61,6 +61,9 @@
   .stat-label { font-size: 12px; color: #666; margin-top: 4px; }
   .button-group { display: flex; gap: 8px; margin-bottom: 1rem; flex-wrap: wrap; }
   .button-group button { flex: 1; min-width: 100px; }
+  .schedule-window-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 1rem; font-size: 13px; }
+  .schedule-window-row label { font-weight: 600; color: #444; }
+  .schedule-window-row select { height: 34px; padding: 0 6px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
   .warning-message { background: #fff3e0; color: #e65100; padding: 12px; border-radius: 10px; margin-bottom: 1rem; font-size: 14px; }
   .history-item { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .history-info { flex: 1; }
@@ -117,9 +120,9 @@
   .overview-edit-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .overview-edit-row label { font-size: 12px; color: #888; }
   .overview-edit-row input[type="date"] { height: 34px; padding: 0 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
-  #jump-fab-container { position: fixed; bottom: 24px; right: 20px; z-index: 1000; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
-  #jump-fab { width: 52px; height: 52px; border-radius: 50%; background: #4a5568; color: #fff; border: none; font-size: 22px; box-shadow: 0 3px 10px rgba(0,0,0,0.25); cursor: pointer; }
-  #jump-fab:active { transform: scale(0.95); }
+  #jump-fab-container { position: fixed; z-index: 1000; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; touch-action: none; }
+  #jump-fab { width: 52px; height: 52px; padding: 0; border-radius: 50%; background: #4a5568; color: #fff; border: none; font-size: 22px; box-shadow: 0 3px 10px rgba(0,0,0,0.25); cursor: grab; display: flex; align-items: center; justify-content: center; line-height: 1; }
+  #jump-fab:active { cursor: grabbing; }
   .jump-menu { display: none; flex-direction: column; gap: 6px; background: #fff; border-radius: 12px; padding: 8px; box-shadow: 0 3px 12px rgba(0,0,0,0.2); }
   .jump-menu.open { display: flex; }
   .jump-menu button { white-space: nowrap; height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid #ddd; background: #fff; font-size: 13px; cursor: pointer; text-align: left; }
@@ -133,6 +136,14 @@
   <div class="button-group">
     <button onclick="updateSchedule()">スケジュール更新</button>
     <button class="btn-delete" onclick="clearData()">リセット</button>
+  </div>
+
+  <div class="schedule-window-row">
+    <label>活動時間：</label>
+    <select id="schedule-start-hour" onchange="onScheduleWindowChange()"></select>
+    <span>〜</span>
+    <select id="schedule-end-hour" onchange="onScheduleWindowChange()"></select>
+    <span class="data-note" style="margin-left: 4px;">急遽できない日はここで調整</span>
   </div>
 
   <div id="warning" style="display: none;"></div>
@@ -155,7 +166,7 @@
   </div>
 
   <div id="schedule-section" class="section">
-    <div class="section-title">今日のスケジュール（9:00-18:00）</div>
+    <div class="section-title" id="schedule-window-label">今日のスケジュール（9:00-18:00）</div>
     <div id="schedule-container">
       <div class="empty-state">スケジュールを作成してください</div>
     </div>
@@ -217,7 +228,7 @@
     <button onclick="jumpToSection('jump-tags')">🏷️ タグ管理</button>
     <button onclick="jumpToSection('jump-backup')">💾 データ</button>
   </div>
-  <button id="jump-fab" onclick="toggleJumpMenu()">⚡</button>
+  <button id="jump-fab">⚡</button>
 </div>
 
 <script>
@@ -230,6 +241,9 @@ let editingTagName = null;
 let searchQuery = '';
 let collapsedGroups = new Set();
 let collapsedOverviewGroups = new Set();
+let scheduleStartHour = 9;
+let scheduleEndHour = 18;
+const SCHEDULE_WINDOW_KEY = 'cleaningScheduleWindow';
 
 const STORAGE_KEY = 'cleaningScheduleItems';
 const SCHEDULE_KEY = 'cleaningSchedule';
@@ -250,6 +264,52 @@ function saveScheduleToStorage() {
   try { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule)); } catch (e) {}
 }
 
+function saveScheduleWindow() {
+  try { localStorage.setItem(SCHEDULE_WINDOW_KEY, JSON.stringify({ start: scheduleStartHour, end: scheduleEndHour })); } catch (e) {}
+}
+
+function loadScheduleWindow() {
+  try {
+    const raw = localStorage.getItem(SCHEDULE_WINDOW_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (typeof data.start === 'number') scheduleStartHour = data.start;
+      if (typeof data.end === 'number') scheduleEndHour = data.end;
+    }
+  } catch (e) {}
+  updateScheduleWindowUI();
+}
+
+function populateHourSelect(selectEl, maxValue) {
+  selectEl.innerHTML = Array.from({ length: maxValue + 1 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
+}
+
+function updateScheduleWindowUI() {
+  const startInput = document.getElementById('schedule-start-hour');
+  const endInput = document.getElementById('schedule-end-hour');
+  if (startInput && startInput.options.length === 0) populateHourSelect(startInput, 23);
+  if (endInput && endInput.options.length === 0) populateHourSelect(endInput, 24);
+  if (startInput) startInput.value = scheduleStartHour;
+  if (endInput) endInput.value = scheduleEndHour;
+  const label = document.getElementById('schedule-window-label');
+  if (label) label.textContent = `今日のスケジュール（${String(scheduleStartHour).padStart(2, '0')}:00-${String(scheduleEndHour).padStart(2, '0')}:00）`;
+}
+
+function onScheduleWindowChange() {
+  const startInput = document.getElementById('schedule-start-hour');
+  const endInput = document.getElementById('schedule-end-hour');
+  let start = parseInt(startInput.value);
+  let end = parseInt(endInput.value);
+  if (isNaN(start)) start = 9;
+  if (isNaN(end)) end = 18;
+  start = Math.max(0, Math.min(23, start));
+  end = Math.max(start + 1, Math.min(24, end));
+  scheduleStartHour = start;
+  scheduleEndHour = end;
+  saveScheduleWindow();
+  updateScheduleWindowUI();
+}
+
 function normalizeItem(item) {
   return {
     ...item,
@@ -261,6 +321,7 @@ function normalizeItem(item) {
 }
 
 function loadFromStorage() {
+  loadScheduleWindow();
   try {
     const tagsRaw = localStorage.getItem(TAGS_KEY);
     if (tagsRaw) tags = JSON.parse(tagsRaw);
@@ -545,7 +606,12 @@ function updateItem(id, field, value) {
   const item = items.find(i => i.id === id);
   if (item) item[field] = value;
   saveToStorage();
-  renderInputs();
+  // タグ・推奨時間帯はグループ分け／並び順に影響するので再描画が必要。
+  // それ以外（名前・頻度・時間など）は再描画するとiOSでキーボードが閉じて
+  // 入力しづらくなるため、データ保存のみに留める。
+  if (field === 'tag' || field === 'preferredTimes') {
+    renderInputs();
+  }
 }
 
 function toggleAllowedDay(id, dayIdx) {
@@ -751,11 +817,11 @@ function deleteTag(tag) {
 
 function parsePreferredTimes(timeStr) {
   if (!timeStr || timeStr.trim() === '') return null;
-  return timeStr.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t) && t >= 9 && t <= 17);
+  return timeStr.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t) && t >= scheduleStartHour && t <= scheduleEndHour - 1);
 }
 
 function canFitAtTime(startTime, duration) {
-  return startTime + duration / 60 <= 18;
+  return startTime + duration / 60 <= scheduleEndHour;
 }
 
 function computeNeededHoursWithBuffer(duration) {
@@ -766,7 +832,7 @@ function computeNeededHoursWithBuffer(duration) {
 }
 
 function canFitHours(startTime, neededHours) {
-  return startTime + neededHours <= 18;
+  return startTime + neededHours <= scheduleEndHour;
 }
 
 function shouldIncludeInSchedule(item, today) {
@@ -796,7 +862,7 @@ function shuffle(array) {
 
 function findAvailableStart(neededHours, usedSlots) {
   const candidates = [];
-  for (let start = 9; start + neededHours <= 18; start++) {
+  for (let start = scheduleStartHour; start + neededHours <= scheduleEndHour; start++) {
     let ok = true;
     for (let i = 0; i < neededHours; i++) {
       if (usedSlots.has(start + i)) { ok = false; break; }
@@ -812,7 +878,7 @@ function markUsedHours(start, neededHours, usedSlots) {
 }
 
 function findNextFreeHour(usedSlots) {
-  for (let h = 9; h <= 17; h++) {
+  for (let h = scheduleStartHour; h <= scheduleEndHour - 1; h++) {
     if (!usedSlots.has(h)) return h;
   }
   return null;
@@ -876,7 +942,7 @@ function buildSchedule(validItems, skipNotReady = false) {
 
       if (item.duration < 60) {
         // 小さい項目：まず全ての推奨時間帯から「合流できる既存ブロック」を優先的に探す
-        const rawPreferredOrder = parsePreferredTimes(item.preferredTimes).filter(h => h >= 9 && h <= 17);
+        const rawPreferredOrder = parsePreferredTimes(item.preferredTimes).filter(h => h >= scheduleStartHour && h <= scheduleEndHour - 1);
 
         for (let hour of rawPreferredOrder) {
           const existingBlock = blocks.find(b =>
@@ -1005,7 +1071,7 @@ function buildSchedule(validItems, skipNotReady = false) {
       let capacityMinutes = 60;
       if (usedMinutes >= 60 - 4) {
         // ちょうど（または余白5分未満で）埋まった場合、片付け用に次の1時間も予約しておく
-        if (!usedSlots.has(hour + 1) && hour + 1 <= 17) {
+        if (!usedSlots.has(hour + 1) && hour + 1 <= scheduleEndHour - 1) {
           usedSlots.add(hour + 1);
           capacityMinutes = 120;
         }
@@ -1262,11 +1328,11 @@ function insertItemIntoExistingSchedule(item) {
   let placedEntry = null;
 
   if (item.duration < 60) {
-    const candidateHours = preferred.length > 0 ? preferred : Array.from({ length: 9 }, (_, i) => 9 + i);
+    const candidateHours = preferred.length > 0 ? preferred : Array.from({ length: scheduleEndHour - scheduleStartHour }, (_, i) => scheduleStartHour + i);
 
     // 同じタグの既存枠に空きがあれば相乗り
     for (let hour of candidateHours) {
-      if (hour < 9 || hour > 17) continue;
+      if (hour < scheduleStartHour || hour > scheduleEndHour - 1) continue;
       const bucket = hourBucketEntries(hour);
       if (bucket.length > 0) {
         const bucketTag = bucket[0].tag || '';
@@ -1280,7 +1346,7 @@ function insertItemIntoExistingSchedule(item) {
     // 空いている時間があれば新規配置
     if (!placedEntry) {
       for (let hour of candidateHours) {
-        if (hour < 9 || hour > 17) continue;
+        if (hour < scheduleStartHour || hour > scheduleEndHour - 1) continue;
         if (!usedHours.has(hour)) {
           placedEntry = makeEntry(item, hour, hour + item.duration / 60);
           break;
@@ -1289,7 +1355,7 @@ function insertItemIntoExistingSchedule(item) {
     }
     // 推奨時間帯がどうしても空いてない場合、他の時間で妥協
     if (!placedEntry && preferred.length > 0) {
-      for (let hour = 9; hour <= 17; hour++) {
+      for (let hour = scheduleStartHour; hour <= scheduleEndHour - 1; hour++) {
         if (!usedHours.has(hour)) {
           placedEntry = makeEntry(item, hour, hour + item.duration / 60);
           break;
@@ -1298,7 +1364,7 @@ function insertItemIntoExistingSchedule(item) {
     }
   } else {
     const neededHours = computeNeededHoursWithBuffer(item.duration);
-    const candidateHours = preferred.length > 0 ? preferred : Array.from({ length: 9 }, (_, i) => 9 + i);
+    const candidateHours = preferred.length > 0 ? preferred : Array.from({ length: scheduleEndHour - scheduleStartHour }, (_, i) => scheduleStartHour + i);
     for (let hour of candidateHours) {
       if (!canFitHours(hour, neededHours)) continue;
       let ok = true;
@@ -1565,6 +1631,97 @@ function jumpToSection(id) {
   }
   document.getElementById('jump-menu').classList.remove('open');
 }
+
+// ===== フローティングボタンのドラッグ移動 =====
+const FAB_POSITION_KEY = 'jumpFabPosition';
+
+function initFabDrag() {
+  const container = document.getElementById('jump-fab-container');
+  const fab = document.getElementById('jump-fab');
+
+  function clampPosition(left, top) {
+    const margin = 8;
+    const maxLeft = window.innerWidth - container.offsetWidth - margin;
+    const maxTop = window.innerHeight - container.offsetHeight - margin;
+    return {
+      left: Math.min(Math.max(left, margin), Math.max(maxLeft, margin)),
+      top: Math.min(Math.max(top, margin), Math.max(maxTop, margin))
+    };
+  }
+
+  function setPosition(left, top, save) {
+    const clamped = clampPosition(left, top);
+    container.style.left = clamped.left + 'px';
+    container.style.top = clamped.top + 'px';
+    container.style.right = 'auto';
+    container.style.bottom = 'auto';
+    if (save) {
+      try { localStorage.setItem(FAB_POSITION_KEY, JSON.stringify(clamped)); } catch (e) {}
+    }
+  }
+
+  // 初期位置：保存済みがあれば復元、無ければ右下
+  let initialLeft, initialTop;
+  try {
+    const saved = localStorage.getItem(FAB_POSITION_KEY);
+    if (saved) {
+      const pos = JSON.parse(saved);
+      initialLeft = pos.left;
+      initialTop = pos.top;
+    }
+  } catch (e) {}
+
+  if (initialLeft === undefined) {
+    // レイアウト確定後に右下へ配置
+    requestAnimationFrame(() => {
+      setPosition(window.innerWidth - container.offsetWidth - 20, window.innerHeight - container.offsetHeight - 24, false);
+    });
+  } else {
+    requestAnimationFrame(() => setPosition(initialLeft, initialTop, false));
+  }
+
+  let dragging = false;
+  let startX = 0, startY = 0, originLeft = 0, originTop = 0, moved = false;
+
+  fab.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    moved = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    const rect = container.getBoundingClientRect();
+    originLeft = rect.left;
+    originTop = rect.top;
+    fab.setPointerCapture(e.pointerId);
+  });
+
+  fab.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moved = true;
+    if (moved) {
+      setPosition(originLeft + dx, originTop + dy, false);
+    }
+  });
+
+  fab.addEventListener('pointerup', (e) => {
+    if (!dragging) return;
+    dragging = false;
+    if (moved) {
+      const rect = container.getBoundingClientRect();
+      setPosition(rect.left, rect.top, true);
+    } else {
+      toggleJumpMenu();
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    const rect = container.getBoundingClientRect();
+    setPosition(rect.left, rect.top, true);
+  });
+}
+
+initFabDrag();
 
 loadFromStorage();
 </script>
