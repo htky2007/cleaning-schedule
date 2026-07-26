@@ -66,6 +66,10 @@
   .schedule-window-row select { height: 34px; padding: 0 6px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
   .suggestion-card { background: linear-gradient(135deg, #fff8ec, #fff3e0); border: 1px solid #ffd699; border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
   .suggestion-text { font-size: 14px; color: #6b4c1f; line-height: 1.6; margin-bottom: 10px; }
+  .suggestion-option { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #fff; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }
+  .suggestion-option-text { font-size: 13px; color: #6b4c1f; }
+  .suggestion-option .btn-confirm { height: 32px; padding: 0 12px; font-size: 12px; flex-shrink: 0; background: #e08a2c; color: #fff; border: none; }
+  .suggestion-option .btn-confirm:hover { background: #c9761f; }
   .suggestion-buttons { display: flex; gap: 8px; }
   .suggestion-buttons button { flex: 1; height: 38px; border-radius: 8px; font-size: 13px; cursor: pointer; }
   .suggestion-buttons .btn-confirm { background: #e08a2c; color: #fff; border: none; }
@@ -1347,7 +1351,6 @@ function renderSchedule() {
   const container = document.getElementById('schedule-container');
   if (schedule.length === 0) {
     container.innerHTML = '<div class="empty-state">スケジュールを作成してください</div>';
-    checkAndShowSuggestion();
     return;
   }
 
@@ -1387,8 +1390,6 @@ function renderSchedule() {
       </div>
     `;
   }).join('');
-
-  checkAndShowSuggestion();
 }
 
 function getTodayDateStr() {
@@ -1396,26 +1397,36 @@ function getTodayDateStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+const SUGGESTION_MAX_COUNT = 2;
+
 function checkAndShowSuggestion() {
   const container = document.getElementById('suggestion-card');
   if (!container) return;
 
-  const activeTasks = schedule.filter(s => !s.isCleanup);
   const now = new Date();
   const currentHourDecimal = now.getHours() + now.getMinutes() / 60;
   const todayStr = getTodayDateStr();
 
   // 今日すでに「今日はここまで」を選んでいたら出さない
   if (suggestionDismissedDate === todayStr) { container.innerHTML = ''; return; }
-  // まだ今日のタスクが残っていたら出さない
-  if (activeTasks.length > 0) { container.innerHTML = ''; return; }
   // 活動終了時刻を過ぎていたら出さない
   if (currentHourDecimal >= scheduleEndHour) { container.innerHTML = ''; return; }
+
+  // 実タスクが入っていない時間帯が1つでも残っていなければ出さない（片付けは除外して判定）
+  const occupiedHours = new Set(schedule.filter(s => !s.isCleanup).map(s => Math.floor(s.startTime + 1e-9)));
+  let hasFreeHour = false;
+  for (let h = scheduleStartHour; h <= scheduleEndHour - 1; h++) {
+    if (!occupiedHours.has(h)) { hasFreeHour = true; break; }
+  }
+  if (!hasFreeHour) { container.innerHTML = ''; return; }
 
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
 
+  const scheduledItemIds = new Set(schedule.filter(s => !s.isCleanup).map(s => s.itemId));
+
   const candidates = items.filter(i => i.place).filter(i => {
+    if (scheduledItemIds.has(i.id)) return false; // 既に今日のスケジュールに入っている項目は除外
     if (i.lastExecuted) {
       const led = new Date(i.lastExecuted);
       if (led >= todayMidnight) return false; // 今日すでにやった項目は除外
@@ -1427,13 +1438,18 @@ function checkAndShowSuggestion() {
   if (candidates.length === 0) { container.innerHTML = ''; return; }
 
   candidates.sort((a, b) => getUrgencyDays(a, todayMidnight) - getUrgencyDays(b, todayMidnight));
-  const suggestion = candidates[0];
+  const suggestions = candidates.slice(0, SUGGESTION_MAX_COUNT);
 
   container.innerHTML = `
     <div class="suggestion-card">
-      <div class="suggestion-text">🎉 順調ですね！時間に余裕がありそうです。<br>「${suggestion.place}」（${suggestion.duration}分）はいかがですか？</div>
+      <div class="suggestion-text">🎉 順調ですね！時間に余裕がありそうです。</div>
+      ${suggestions.map(s => `
+        <div class="suggestion-option">
+          <span class="suggestion-option-text">「${s.place}」（${s.duration}分）</span>
+          <button class="btn-confirm" onclick="acceptSuggestion(${s.id})">＋ 追加する</button>
+        </div>
+      `).join('')}
       <div class="suggestion-buttons">
-        <button class="btn-confirm" onclick="acceptSuggestion(${suggestion.id})">＋ 追加する</button>
         <button class="btn-dismiss" onclick="dismissSuggestion()">今日はここまで</button>
       </div>
     </div>
@@ -1451,6 +1467,7 @@ function acceptSuggestion(itemId) {
     warningDiv.innerHTML = `<div class="warning-message">⚠️ 「${item.place}」を追加する空き時間が見つかりませんでした。</div>`;
     warningDiv.style.display = 'block';
   }
+  checkAndShowSuggestion();
 }
 
 function dismissSuggestion() {
@@ -1523,6 +1540,9 @@ setInterval(tickTimers, 1000);
 function completeItem(itemId, place) {
   const item = items.find(i => i.id === itemId);
   if (item) {
+    const completedEntry = schedule.find(s => !s.isCleanup && s.itemId === itemId);
+    const completedHour = completedEntry ? Math.floor(completedEntry.startTime + 1e-9) : null;
+
     const previousLastExecuted = item.lastExecuted;
     item.lastExecuted = new Date();
     item.timerStartedAt = null;
@@ -1536,6 +1556,14 @@ function completeItem(itemId, place) {
     updateStats();
     if (document.getElementById('overview-section').style.display !== 'none') {
       renderOverview();
+    }
+
+    // 完了したタスクが入っていた時間帯（1時間分）の実タスクが全て終わったら、サジェストをチェックする
+    if (completedHour !== null) {
+      const stillHasTasksInHour = schedule.some(s => !s.isCleanup && Math.floor(s.startTime + 1e-9) === completedHour);
+      if (!stillHasTasksInHour) {
+        checkAndShowSuggestion();
+      }
     }
   }
 }
