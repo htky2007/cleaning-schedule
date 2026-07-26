@@ -83,6 +83,8 @@
   .drag-row-info { flex: 1; min-width: 0; }
   .drag-row-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex-shrink: 0; }
   .warning-message { background: #fff3e0; color: #e65100; padding: 12px; border-radius: 10px; margin-bottom: 1rem; font-size: 14px; }
+  .warning-summary { display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-weight: 600; }
+  #warning-detail { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ffd699; line-height: 1.6; }
   .history-item { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .history-info { flex: 1; }
   .history-place { font-weight: 600; color: #2c2c2c; font-size: 14px; }
@@ -868,6 +870,15 @@ function canFitAtTime(startTime, duration) {
   return startTime + duration / 60 <= scheduleEndHour;
 }
 
+function toggleWarningDetail() {
+  const detail = document.getElementById('warning-detail');
+  const icon = document.getElementById('warning-toggle-icon');
+  if (!detail) return;
+  const isOpen = detail.style.display !== 'none';
+  detail.style.display = isOpen ? 'none' : 'block';
+  if (icon) icon.textContent = isOpen ? '▶' : '▼';
+}
+
 function computeNeededHoursWithBuffer(duration) {
   let neededHours = Math.ceil(duration / 60);
   const slack = neededHours * 60 - duration;
@@ -1181,7 +1192,15 @@ function buildSchedule(validItems, skipNotReady = false) {
 
   const warningDiv = document.getElementById('warning');
   if (warningItems.length > 0) {
-    warningDiv.innerHTML = `<div class="warning-message">⚠️ 時間内に収まりません：${warningItems.join('、')}</div>`;
+    warningDiv.innerHTML = `
+      <div class="warning-message">
+        <div class="warning-summary" onclick="toggleWarningDetail()">
+          <span>⚠️ 時間内に収まらない項目が${warningItems.length}件あります</span>
+          <span id="warning-toggle-icon">▶</span>
+        </div>
+        <div id="warning-detail" style="display: none;">${warningItems.join('、')}</div>
+      </div>
+    `;
     warningDiv.style.display = 'block';
   } else {
     warningDiv.style.display = 'none';
