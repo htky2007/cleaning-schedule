@@ -849,9 +849,19 @@ function deleteTag(tag) {
   renderHistory();
 }
 
+function parsePreferredTimesRaw(timeStr) {
+  if (!timeStr || timeStr.trim() === '') return null;
+  const result = timeStr.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t));
+  return result.length > 0 ? result : null;
+}
+
 function parsePreferredTimes(timeStr) {
   if (!timeStr || timeStr.trim() === '') return null;
-  return timeStr.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t) && t >= scheduleStartHour && t <= scheduleEndHour - 1);
+  const result = timeStr.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t) && t >= scheduleStartHour && t <= scheduleEndHour - 1);
+  // 活動時間の範囲外の値しか無かった場合は「推奨時間帯なし」として扱う
+  // （空配列はJSではtruthyなので、そのままだと「推奨時間帯あり（中身は空）」という
+  // 永遠に配置できない状態になってしまうため）
+  return result.length > 0 ? result : null;
 }
 
 function canFitAtTime(startTime, duration) {
@@ -952,8 +962,8 @@ function buildSchedule(validItems, skipNotReady = false) {
     itemsToSchedule = validItems.filter(i => shouldIncludeInSchedule(i, today));
   }
 
-  const itemsWithPreferredRaw = itemsToSchedule.filter(i => parsePreferredTimes(i.preferredTimes));
-  const itemsWithoutPreferred = itemsToSchedule.filter(i => !parsePreferredTimes(i.preferredTimes));
+  const itemsWithPreferredRaw = itemsToSchedule.filter(i => parsePreferredTimesRaw(i.preferredTimes));
+  const itemsWithoutPreferred = itemsToSchedule.filter(i => !parsePreferredTimesRaw(i.preferredTimes));
 
   // 期限が近い（＝緊急度が高い）項目を優先的に処理する（同着はランダム）
   const itemsWithPreferred = sortByUrgencyWithRandomTiebreak(itemsWithPreferredRaw, today);
@@ -975,12 +985,22 @@ function buildSchedule(validItems, skipNotReady = false) {
     const groupItems = sortByUrgencyWithRandomTiebreak(preferredGroupMap[tagKey], today);
 
     groupItems.forEach(item => {
-      const preferred = shuffle(parsePreferredTimes(item.preferredTimes));
+      const rawPreferred = parsePreferredTimesRaw(item.preferredTimes);
+      const validPreferred = rawPreferred.filter(h => h >= scheduleStartHour && h <= scheduleEndHour - 1);
+
+      if (validPreferred.length === 0) {
+        // 推奨時間帯が指定されているが、全て今の活動時間の範囲外 →
+        // 推奨時間帯は最優先事項なので、他の時間に振り替えたりせず今日は対象外とする
+        warningItems.push(`${item.place}（推奨時間帯：${rawPreferred.join(',')} が活動時間外のため対象外）`);
+        return;
+      }
+
+      const preferred = shuffle(validPreferred);
       let placed = false;
 
       if (item.duration < 60) {
         // 小さい項目：まず全ての推奨時間帯から「合流できる既存ブロック」を優先的に探す
-        const rawPreferredOrder = parsePreferredTimes(item.preferredTimes).filter(h => h >= scheduleStartHour && h <= scheduleEndHour - 1);
+        const rawPreferredOrder = validPreferred;
 
         for (let hour of rawPreferredOrder) {
           const existingBlock = blocks.find(b =>
