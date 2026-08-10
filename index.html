@@ -2105,6 +2105,20 @@ function swapBlockTimes(hourA, hourB) {
   const entriesB = schedule.filter(s => !s.isCleanup && Math.floor(s.startTime + 1e-9) === hourB);
   if (entriesA.length === 0 || entriesB.length === 0) return;
 
+  const idsA = new Set(entriesA.map(e => e.itemId));
+  const idsB = new Set(entriesB.map(e => e.itemId));
+
+  // 入れ替え対象のブロックに紐づいていた片付けは、位置がズレて意味を持たなくなるため削除する
+  // （必要なら「スケジュール更新」を押せば片付けも含めて正しく作り直される）
+  schedule = schedule.filter(s => {
+    if (!s.isCleanup) return true;
+    const related = s.relatedItemIds || [];
+    if (related.length === 0) return true;
+    const belongsToA = related.every(id => idsA.has(id));
+    const belongsToB = related.every(id => idsB.has(id));
+    return !(belongsToA || belongsToB);
+  });
+
   // それぞれのブロック内での「開始時刻からのオフセット」を保ったまま、開始時刻だけ入れ替える
   const offsetsA = entriesA.map(e => ({ entry: e, offset: e.startTime - hourA }));
   const offsetsB = entriesB.map(e => ({ entry: e, offset: e.startTime - hourB }));
