@@ -64,7 +64,7 @@
   .schedule-window-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 1rem; font-size: 13px; }
   .schedule-window-row label { font-weight: 600; color: #444; }
   .schedule-window-row select { height: 34px; padding: 0 6px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
-  .suggestion-card { background: linear-gradient(135deg, #fff8ec, #fff3e0); border: 1px solid #ffd699; border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
+  .suggestion-card { background: linear-gradient(135deg, #fff8ec, #fff3e0); border: 1px solid #ffd699; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
   .suggestion-text { font-size: 14px; color: #6b4c1f; line-height: 1.6; margin-bottom: 10px; }
   .suggestion-option { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #fff; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }
   .suggestion-option-text { font-size: 13px; color: #6b4c1f; }
@@ -193,10 +193,10 @@
 
   <div id="schedule-section" class="section">
     <div class="section-title" id="schedule-window-label">今日のスケジュール（9:00-18:00）</div>
+    <div id="suggestion-card"></div>
     <div id="schedule-container">
       <div class="empty-state">スケジュールを作成してください</div>
     </div>
-    <div id="suggestion-card"></div>
   </div>
 
   <div id="history-section" class="section" style="display: none;">
@@ -273,8 +273,6 @@ let collapsedOverviewGroups = new Set();
 let scheduleStartHour = 9;
 let scheduleEndHour = 18;
 const SCHEDULE_WINDOW_KEY = 'cleaningScheduleWindow';
-let suggestionDismissedDate = null;
-const SUGGESTION_DISMISS_KEY = 'cleaningSuggestionDismissedDate';
 
 const STORAGE_KEY = 'cleaningScheduleItems';
 const SCHEDULE_KEY = 'cleaningSchedule';
@@ -359,9 +357,6 @@ function normalizeItem(item) {
 
 function loadFromStorage() {
   loadScheduleWindow();
-  try {
-    suggestionDismissedDate = localStorage.getItem(SUGGESTION_DISMISS_KEY) || null;
-  } catch (e) {}
   try {
     const tagsRaw = localStorage.getItem(TAGS_KEY);
     if (tagsRaw) tags = JSON.parse(tagsRaw);
@@ -1246,20 +1241,27 @@ function calculateNextDeadline(lastExecuted, frequency, unit) {
 
 function autoRemovePastCleanup() {
   if (!schedule || schedule.length === 0) return;
-  const now = new Date();
-  const currentHourDecimal = now.getHours() + now.getMinutes() / 60;
-  const before = schedule.length;
+  const now = Date.now();
+  let changed = false;
   schedule = schedule.filter(item => {
     if (!item.isCleanup) return true;
-    const timePassed = item.endTime <= currentHourDecimal;
-    if (!timePassed) return true;
-    const relatedStillPending = (item.relatedItemIds || []).some(
+    const stillPending = (item.relatedItemIds || []).some(
       id => schedule.some(s => !s.isCleanup && s.itemId === id)
     );
-    // 時間が過ぎていても、関連タスクが未完了なら残す
-    return relatedStillPending;
+    if (stillPending) return true; // 関連タスクがまだ残っているので保持
+    if (!item.readyAt) {
+      // 関連タスクが揃って完了した瞬間を記録する（ここから5分後に消す）
+      item.readyAt = now;
+      changed = true;
+      return true;
+    }
+    if (now - item.readyAt >= 5 * 60 * 1000) {
+      changed = true;
+      return false; // 完了から5分経過したので削除
+    }
+    return true;
   });
-  if (schedule.length !== before) {
+  if (changed) {
     saveScheduleToStorage();
     renderSchedule();
     updateStats();
@@ -1405,10 +1407,7 @@ function checkAndShowSuggestion() {
 
   const now = new Date();
   const currentHourDecimal = now.getHours() + now.getMinutes() / 60;
-  const todayStr = getTodayDateStr();
 
-  // 今日すでに「今日はここまで」を選んでいたら出さない
-  if (suggestionDismissedDate === todayStr) { container.innerHTML = ''; return; }
   // 活動終了時刻を過ぎていたら出さない
   if (currentHourDecimal >= scheduleEndHour) { container.innerHTML = ''; return; }
 
@@ -1450,7 +1449,7 @@ function checkAndShowSuggestion() {
         </div>
       `).join('')}
       <div class="suggestion-buttons">
-        <button class="btn-dismiss" onclick="dismissSuggestion()">今日はここまで</button>
+        <button class="btn-dismiss" onclick="dismissSuggestion()">この時間はここまで</button>
       </div>
     </div>
   `;
@@ -1471,8 +1470,6 @@ function acceptSuggestion(itemId) {
 }
 
 function dismissSuggestion() {
-  suggestionDismissedDate = getTodayDateStr();
-  try { localStorage.setItem(SUGGESTION_DISMISS_KEY, suggestionDismissedDate); } catch (e) {}
   const container = document.getElementById('suggestion-card');
   if (container) container.innerHTML = '';
 }
@@ -1551,6 +1548,7 @@ function completeItem(itemId, place) {
     saveHistoryToStorage();
     schedule = schedule.filter(s => s.itemId !== itemId);
     saveScheduleToStorage();
+    autoRemovePastCleanup();
     renderSchedule();
     renderHistory();
     updateStats();
