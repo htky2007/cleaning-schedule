@@ -82,12 +82,14 @@
   .block-wrap { position: relative; }
   .block-drag-handle {
     display: flex; align-items: center; justify-content: center; gap: 4px;
-    height: 26px; margin-bottom: 4px; border-radius: 8px 8px 0 0;
-    background: #ece7d8; color: #8a7f5f; font-size: 11px; font-weight: 600;
-    cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    height: 30px; margin-bottom: 4px; border-radius: 8px 8px 0 0;
+    background: #ece7d8; color: #8a7f5f; font-size: 12px; font-weight: 600;
+    cursor: pointer; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
-  .block-drag-handle:active { cursor: grabbing; }
-  .block-wrap.block-dragging { opacity: 0.5; }
+  .block-drag-handle:active { background: #ddd6c0; }
+  .block-wrap.block-selected .block-drag-handle {
+    background: #4a5568; color: #fff;
+  }
   .drag-list { display: flex; flex-direction: column; }
   .drag-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px dashed #eee; background: #fff; }
   .drag-row:last-child { border-bottom: none; }
@@ -1408,7 +1410,7 @@ function renderSchedule() {
 }
 
 function blockDragHandleHtml() {
-  return `<div class="block-drag-handle">⣿⣿ この枠ごと入れ替え</div>`;
+  return `<div class="block-drag-handle">⣿⣿ タップして枠ごと入れ替え</div>`;
 }
 
 function getTodayDateStr() {
@@ -2047,14 +2049,16 @@ function initDragReorder() {
   const container = document.getElementById('schedule-container');
   if (!container) return;
 
-  container.addEventListener('pointerdown', (e) => {
+  container.addEventListener('click', (e) => {
     const blockHandle = e.target.closest('.block-drag-handle');
     if (blockHandle) {
       const block = blockHandle.closest('.block-wrap');
-      if (block) startBlockDrag(block, container, e);
+      if (block) onBlockHandleTap(block);
       return;
     }
+  });
 
+  container.addEventListener('pointerdown', (e) => {
     const handle = e.target.closest('.drag-handle');
     if (!handle) return;
     const row = handle.closest('.drag-row');
@@ -2064,69 +2068,35 @@ function initDragReorder() {
   });
 }
 
-function startBlockDrag(block, container, e) {
-  e.preventDefault();
-  try { block.setPointerCapture(e.pointerId); } catch (err) {}
+let selectedBlockHour = null;
 
-  // 行の並び替えと同じ考え方：ドラッグ中はDOMを動かさず見た目だけ追従させ、
-  // 指を離した瞬間に1回だけ「どのブロックと入れ替えるか」を決定する。
-  const blocks = Array.from(container.children).filter(el => el.classList.contains('block-wrap'));
-  const startY = e.clientY;
+function onBlockHandleTap(block) {
+  const hour = parseFloat(block.dataset.blockHour);
 
-  block.classList.add('block-dragging');
-  block.style.position = 'relative';
-  block.style.zIndex = '10';
-  isDraggingRow = true;
-  container.style.touchAction = 'none';
-  block.style.touchAction = 'none';
-
-  let handled = false;
-
-  function onMove(ev) {
-    const deltaY = ev.clientY - startY;
-    block.style.transform = `translateY(${deltaY}px)`;
+  if (selectedBlockHour === null) {
+    // 1回目のタップ：入れ替え元として選択する
+    selectedBlockHour = hour;
+    updateBlockSelectionHighlight();
+    return;
   }
 
-  function onUp(ev) {
-    if (handled) return;
-    handled = true;
-
-    block.removeEventListener('pointermove', onMove);
-    block.removeEventListener('pointerup', onUp);
-    block.removeEventListener('pointercancel', onUp);
-
-    const finalY = (ev && typeof ev.clientY === 'number') ? ev.clientY : startY;
-
-    block.style.transform = '';
-    block.style.position = '';
-    block.style.zIndex = '';
-    block.classList.remove('block-dragging');
-    isDraggingRow = false;
-    container.style.touchAction = '';
-    block.style.touchAction = '';
-
-    // 最終的な指の位置から、どのブロックの上に落ちたかを判定して入れ替える
-    let targetBlock = null;
-    for (const b of blocks) {
-      if (b === block) continue;
-      const rect = b.getBoundingClientRect();
-      if (finalY >= rect.top && finalY <= rect.bottom) {
-        targetBlock = b;
-        break;
-      }
-    }
-
-    if (targetBlock) {
-      const sourceHour = parseFloat(block.dataset.blockHour);
-      const targetHour = parseFloat(targetBlock.dataset.blockHour);
-      swapBlockTimes(sourceHour, targetHour);
-    }
+  if (selectedBlockHour === hour) {
+    // 同じ枠をもう一度タップ → 選択解除
+    selectedBlockHour = null;
+    updateBlockSelectionHighlight();
+    return;
   }
 
-  block.addEventListener('pointermove', onMove);
-  block.addEventListener('pointerup', onUp);
-  block.addEventListener('pointercancel', onUp);
-  block.addEventListener('lostpointercapture', onUp, { once: true });
+  // 2回目のタップ：入れ替え先が決まったのでスワップを実行
+  swapBlockTimes(selectedBlockHour, hour);
+  selectedBlockHour = null;
+}
+
+function updateBlockSelectionHighlight() {
+  document.querySelectorAll('.block-wrap').forEach(el => {
+    const hour = parseFloat(el.dataset.blockHour);
+    el.classList.toggle('block-selected', hour === selectedBlockHour);
+  });
 }
 
 function swapBlockTimes(hourA, hourB) {
