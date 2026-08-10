@@ -79,6 +79,15 @@
   .group-card { padding: 0.75rem 1rem 0.25rem; }
   .group-card-header { font-size: 13px; font-weight: 600; color: #555; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 8px; border-bottom: 1px solid #eee; margin-bottom: 4px; }
   .group-card-hint { font-size: 11px; color: #aaa; font-weight: 400; margin-left: auto; }
+  .block-wrap { position: relative; }
+  .block-drag-handle {
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    height: 26px; margin-bottom: 4px; border-radius: 8px 8px 0 0;
+    background: #ece7d8; color: #8a7f5f; font-size: 11px; font-weight: 600;
+    cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  .block-drag-handle:active { cursor: grabbing; }
+  .block-wrap.block-dragging { opacity: 0.5; }
   .drag-list { display: flex; flex-direction: column; }
   .drag-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px dashed #eee; background: #fff; }
   .drag-row:last-child { border-bottom: none; }
@@ -1373,25 +1382,33 @@ function renderSchedule() {
       `;
     }
 
+    const hour = Math.floor(group[0].startTime + 1e-9);
+
     if (group.length === 1) {
-      return renderSingleTaskCardHtml(group[0]);
+      return `<div class="block-wrap" data-block-hour="${hour}">${blockDragHandleHtml()}${renderSingleTaskCardHtml(group[0])}</div>`;
     }
 
     // 同じ時間枠に複数タスクがある場合：ドラッグで並び替え可能なグループカード
-    const hour = Math.floor(group[0].startTime + 1e-9);
     const tag = group[0].tag;
     return `
-      <div class="schedule-card group-card">
-        <div class="group-card-header">
-          ${formatTime(hour)} - ${formatTime(hour + 1)}（${group.length}件）${tag ? `<span class="schedule-item-tag">${tag}</span>` : ''}
-          <span class="group-card-hint">☰ 長押しで並び替え</span>
-        </div>
-        <div class="drag-list" data-hour="${hour}">
-          ${group.map(item => renderDragRowHtml(item)).join('')}
+      <div class="block-wrap" data-block-hour="${hour}">
+        ${blockDragHandleHtml()}
+        <div class="schedule-card group-card">
+          <div class="group-card-header">
+            ${formatTime(hour)} - ${formatTime(hour + 1)}（${group.length}件）${tag ? `<span class="schedule-item-tag">${tag}</span>` : ''}
+            <span class="group-card-hint">☰ 長押しで並び替え</span>
+          </div>
+          <div class="drag-list" data-hour="${hour}">
+            ${group.map(item => renderDragRowHtml(item)).join('')}
+          </div>
         </div>
       </div>
     `;
   }).join('');
+}
+
+function blockDragHandleHtml() {
+  return `<div class="block-drag-handle">⣿⣿ この枠ごと入れ替え</div>`;
 }
 
 function getTodayDateStr() {
@@ -2031,6 +2048,13 @@ function initDragReorder() {
   if (!container) return;
 
   container.addEventListener('pointerdown', (e) => {
+    const blockHandle = e.target.closest('.block-drag-handle');
+    if (blockHandle) {
+      const block = blockHandle.closest('.block-wrap');
+      if (block) startBlockDrag(block, container, e);
+      return;
+    }
+
     const handle = e.target.closest('.drag-handle');
     if (!handle) return;
     const row = handle.closest('.drag-row');
@@ -2038,6 +2062,95 @@ function initDragReorder() {
     if (!row || !list) return;
     startRowDrag(row, list, e);
   });
+}
+
+function startBlockDrag(block, container, e) {
+  e.preventDefault();
+  try { block.setPointerCapture(e.pointerId); } catch (err) {}
+
+  // 行の並び替えと同じ考え方：ドラッグ中はDOMを動かさず見た目だけ追従させ、
+  // 指を離した瞬間に1回だけ「どのブロックと入れ替えるか」を決定する。
+  const blocks = Array.from(container.children).filter(el => el.classList.contains('block-wrap'));
+  const startY = e.clientY;
+
+  block.classList.add('block-dragging');
+  block.style.position = 'relative';
+  block.style.zIndex = '10';
+  isDraggingRow = true;
+  container.style.touchAction = 'none';
+  block.style.touchAction = 'none';
+
+  let handled = false;
+
+  function onMove(ev) {
+    const deltaY = ev.clientY - startY;
+    block.style.transform = `translateY(${deltaY}px)`;
+  }
+
+  function onUp(ev) {
+    if (handled) return;
+    handled = true;
+
+    block.removeEventListener('pointermove', onMove);
+    block.removeEventListener('pointerup', onUp);
+    block.removeEventListener('pointercancel', onUp);
+
+    const finalY = (ev && typeof ev.clientY === 'number') ? ev.clientY : startY;
+
+    block.style.transform = '';
+    block.style.position = '';
+    block.style.zIndex = '';
+    block.classList.remove('block-dragging');
+    isDraggingRow = false;
+    container.style.touchAction = '';
+    block.style.touchAction = '';
+
+    // 最終的な指の位置から、どのブロックの上に落ちたかを判定して入れ替える
+    let targetBlock = null;
+    for (const b of blocks) {
+      if (b === block) continue;
+      const rect = b.getBoundingClientRect();
+      if (finalY >= rect.top && finalY <= rect.bottom) {
+        targetBlock = b;
+        break;
+      }
+    }
+
+    if (targetBlock) {
+      const sourceHour = parseFloat(block.dataset.blockHour);
+      const targetHour = parseFloat(targetBlock.dataset.blockHour);
+      swapBlockTimes(sourceHour, targetHour);
+    }
+  }
+
+  block.addEventListener('pointermove', onMove);
+  block.addEventListener('pointerup', onUp);
+  block.addEventListener('pointercancel', onUp);
+  block.addEventListener('lostpointercapture', onUp, { once: true });
+}
+
+function swapBlockTimes(hourA, hourB) {
+  if (hourA === hourB) return;
+  const entriesA = schedule.filter(s => !s.isCleanup && Math.floor(s.startTime + 1e-9) === hourA);
+  const entriesB = schedule.filter(s => !s.isCleanup && Math.floor(s.startTime + 1e-9) === hourB);
+  if (entriesA.length === 0 || entriesB.length === 0) return;
+
+  // それぞれのブロック内での「開始時刻からのオフセット」を保ったまま、開始時刻だけ入れ替える
+  const offsetsA = entriesA.map(e => ({ entry: e, offset: e.startTime - hourA }));
+  const offsetsB = entriesB.map(e => ({ entry: e, offset: e.startTime - hourB }));
+
+  offsetsA.forEach(({ entry, offset }) => {
+    entry.startTime = hourB + offset;
+    entry.endTime = entry.startTime + entry.duration / 60;
+  });
+  offsetsB.forEach(({ entry, offset }) => {
+    entry.startTime = hourA + offset;
+    entry.endTime = entry.startTime + entry.duration / 60;
+  });
+
+  schedule.sort((a, b) => a.startTime - b.startTime);
+  saveScheduleToStorage();
+  renderSchedule();
 }
 
 function startRowDrag(row, list, e) {
