@@ -1,0 +1,17 @@
+{
+  "name": "insight 読破トラッカー",
+  "short_name": "insight",
+  "description": "枠別に読書の進みを記録するトラッカー",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ecefee",
+  "theme_color": "#2d6a5a",
+  "lang": "ja",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
