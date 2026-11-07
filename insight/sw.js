@@ -1,6 +1,6 @@
 // Offline shell for the reading tracker.
 // Bump CACHE when index.html changes, so phones pick the new version up.
-const CACHE = "insight-tracker-v1";
+const CACHE = "insight-tracker-v2";
 const ASSETS = [
   "./",
   "./index.html",
